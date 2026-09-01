@@ -1,0 +1,31 @@
+{
+  "name": "rivulet",
+  "version": "0.1.0",
+  "description": "Offline-first CRDT synchronization engine for low-bandwidth, high-latency environments",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "engines": { "node": ">=22.5.0" },
+  "imports": {
+    "#core/*": "./src/core/*.js",
+    "#protocol/*": "./src/protocol/*.js",
+    "#storage/*": "./src/storage/*.js",
+    "#client/*": "./src/client/*.js",
+    "#server/*": "./src/server/*.js",
+    "#bench/*": "./bench/*.js"
+  },
+  "scripts": {
+    "test": "node --test --experimental-sqlite test/ src/",
+    "test:watch": "node --test --watch --experimental-sqlite test/ src/",
+    "test:core": "node --test --experimental-sqlite 'src/core/*.test.js'",
+    "test:fuzz": "node --test --experimental-sqlite test/fuzz.test.js",
+    "serve": "node --experimental-sqlite apps/cli/serve.js",
+    "demo": "node --experimental-sqlite apps/cli/serve.js --demo",
+    "bench": "node --experimental-sqlite bench/run.js",
+    "bench:all": "node --experimental-sqlite bench/run.js --all --out bench/results",
+    "paper:figures": "node --experimental-sqlite scripts/make-figures.js",
+    "check": "node --check-all scripts/syntax-check.js || node scripts/syntax-check.js",
+    "lint": "node scripts/syntax-check.js"
+  },
+  "keywords": ["crdt", "offline-first", "synchronization", "sqlite", "indexeddb", "distributed-systems"]
+}
