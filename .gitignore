@@ -1,0 +1,15 @@
+node_modules/
+*.log
+.DS_Store
+.rivulet/
+data/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+bench/results/*.json
+bench/results/*.csv
+!bench/results/.gitkeep
+paper/figures/*.svg
+coverage/
+.tmp/
