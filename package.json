@@ -5,7 +5,9 @@
   "type": "module",
   "license": "MIT",
   "private": true,
-  "engines": { "node": ">=22.5.0" },
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "imports": {
     "#core/*": "./src/core/*.js",
     "#protocol/*": "./src/protocol/*.js",
@@ -15,17 +17,24 @@
     "#bench/*": "./bench/*.js"
   },
   "scripts": {
-    "test": "node --test --experimental-sqlite test/ src/",
-    "test:watch": "node --test --watch --experimental-sqlite test/ src/",
-    "test:core": "node --test --experimental-sqlite 'src/core/*.test.js'",
+    "test": "node --test --experimental-sqlite \"src/**/*.test.js\" \"test/**/*.test.js\"",
+    "test:watch": "node --test --watch --experimental-sqlite \"src/**/*.test.js\" \"test/**/*.test.js\"",
+    "test:core": "node --test --experimental-sqlite \"src/core/**/*.test.js\"",
     "test:fuzz": "node --test --experimental-sqlite test/fuzz.test.js",
     "serve": "node --experimental-sqlite apps/cli/serve.js",
     "demo": "node --experimental-sqlite apps/cli/serve.js --demo",
     "bench": "node --experimental-sqlite bench/run.js",
     "bench:all": "node --experimental-sqlite bench/run.js --all --out bench/results",
     "paper:figures": "node --experimental-sqlite scripts/make-figures.js",
-    "check": "node --check-all scripts/syntax-check.js || node scripts/syntax-check.js",
-    "lint": "node scripts/syntax-check.js"
+    "lint": "node scripts/syntax-check.js",
+    "test:integration": "node --test --experimental-sqlite \"test/**/*.test.js\""
   },
-  "keywords": ["crdt", "offline-first", "synchronization", "sqlite", "indexeddb", "distributed-systems"]
+  "keywords": [
+    "crdt",
+    "offline-first",
+    "synchronization",
+    "sqlite",
+    "indexeddb",
+    "distributed-systems"
+  ]
 }
