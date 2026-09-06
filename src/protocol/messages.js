@@ -104,9 +104,10 @@ export function sync({ node, room, have, push, limit, schema }) {
  * @param {number} args.duplicates operations the server already held
  * @param {Array<{op: string, reason: string}>} [args.rejected]
  * @param {object} [args.pull] encoded batch for the client
+ * @param {number} [args.you] the client's own durably-accepted sequence frontier
  * @param {boolean} [args.more] true when another round is needed to finish
  */
-export function ack({ node, accepted = 0, duplicates = 0, rejected = [], pull, have, more = false, serverTs }) {
+export function ack({ node, accepted = 0, duplicates = 0, rejected = [], pull, have, more = false, you = 0, serverTs }) {
   return {
     t: MessageType.ACK,
     pv: PROTOCOL_VERSION,
@@ -116,6 +117,10 @@ export function ack({ node, accepted = 0, duplicates = 0, rejected = [], pull, h
     ...(rejected.length ? { bad: rejected } : {}),
     ...(pull ? { pull } : {}),
     have: have?.toJSON?.() ?? have ?? {},
+    // How far the client's own history is durably stored. The client advances
+    // its outbox watermark to exactly this, so a partially accepted push
+    // retries only the part that did not land.
+    you,
     more,
     ts: serverTs,
   };
