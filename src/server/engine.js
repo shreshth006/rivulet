@@ -1,0 +1,302 @@
+/**
+ * @file The sync server, independent of any transport.
+ *
+ * The server is deliberately not authoritative about *content*. It never
+ * merges, never resolves a conflict, and never rejects an operation for
+ * disagreeing with another -- the CRDTs make that unnecessary, and a server
+ * that adjudicated would reintroduce exactly the coordination point this
+ * design exists to remove.
+ *
+ * What it is authoritative about is *durability and fan-out*: it holds the
+ * union of every replica's operations, answers "what am I missing?" cheaply,
+ * and pushes new operations to whoever is listening. It is, in effect, a
+ * replica that never writes.
+ *
+ * That has a useful consequence: the server is not a single point of
+ * correctness. If it loses its disk, every client still holds its own
+ * operations and the union reassembles on the next sync. Losing the server
+ * costs availability, not data.
+ *
+ * Transport lives in `http.js`; this file is what both the HTTP server and the
+ * in-process test harness drive.
+ */
+
+import { Emitter } from '#core/util';
+import { OpLog } from '#storage/oplog';
+import { VersionVector } from '#core/version-vector';
+import { decodeOps, encodeOps } from '#protocol/codec';
+import {
+  MessageType, DEFAULT_LIMITS, ack, welcome, errorMessage,
+  validateMessage, readVector, assertSchemaMatch,
+} from '#protocol/messages';
+import { newNodeId } from '#core/ids';
+import { AuthError, ProtocolError, ValidationError, RivuletError } from '#core/errors';
+
+/** A room is one synchronisation domain: one shared operation log. */
+class Room extends Emitter {
+  /** @param {string} name @param {OpLog} log */
+  constructor(name, log) {
+    super();
+    this.name = name;
+    this.log = log;
+    /** @type {Set<(ops: object[], from: string) => void>} live listeners */
+    this.listeners = new Set();
+    this.lastActivity = Date.now();
+  }
+
+  /**
+   * Hand new operations to every connected client except the one that sent
+   * them. Excluding the sender is not just an optimisation: a client that
+   * received its own operations back would re-append them, and on a slow link
+   * that echo competes with real traffic for the same scarce bandwidth.
+   */
+  broadcast(ops, from) {
+    if (ops.length === 0) return 0;
+    let delivered = 0;
+    for (const listener of [...this.listeners]) {
+      try {
+        if (listener.node !== from) { listener(ops, from); delivered++; }
+      } catch {
+        // A wedged listener must not take down a sync request.
+        this.listeners.delete(listener);
+      }
+    }
+    return delivered;
+  }
+
+  subscribe(listener) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  get connections() { return this.listeners.size; }
+}
+
+export class SyncServer extends Emitter {
+  #rooms = new Map();
+  #openRoom;
+  #node = null;
+  #limits;
+  #authorize;
+  #schema;
+
+  /**
+   * @param {object} opts
+   * @param {(room: string) => Promise<object>} opts.storage adapter factory, one per room
+   * @param {string} [opts.schema] schema fingerprint clients must match
+   * @param {(ctx: object) => (boolean|Promise<boolean>)} [opts.authorize]
+   * @param {object} [opts.limits]
+   * @param {string} [opts.node] fixed server id (tests); otherwise minted
+   */
+  constructor({ storage, schema, authorize, limits, node } = {}) {
+    super();
+    if (typeof storage !== 'function') {
+      throw new ValidationError('SyncServer needs a storage factory');
+    }
+    this.#openRoom = storage;
+    this.#schema = schema;
+    this.#authorize = authorize ?? (() => true);
+    this.#limits = { ...DEFAULT_LIMITS, ...limits };
+    this.#node = node ?? null;
+  }
+
+  get node() { return (this.#node ??= newNodeId()); }
+  get limits() { return { ...this.#limits }; }
+  get roomNames() { return [...this.#rooms.keys()]; }
+
+  /** Open a room's log on first use. Concurrent callers share one open. */
+  async room(name) {
+    let entry = this.#rooms.get(name);
+    if (entry) return entry instanceof Promise ? entry : entry;
+
+    const opening = (async () => {
+      const log = await new OpLog(await this.#openRoom(name)).open();
+      const room = new Room(name, log);
+      this.#rooms.set(name, room);
+      this.emit('room-open', { room: name });
+      return room;
+    })();
+    this.#rooms.set(name, opening);
+    return opening;
+  }
+
+  async #authorized(ctx) {
+    if (!(await this.#authorize(ctx))) {
+      throw new AuthError('not authorised for this room', { room: ctx.room });
+    }
+  }
+
+  /* ----------------------------------------------------------- handlers */
+
+  /** Capability negotiation and an early schema check. */
+  async handleHello(msg, ctx = {}) {
+    validateMessage(msg, MessageType.HELLO);
+    await this.#authorized({ ...ctx, room: msg.room, node: msg.node });
+    assertSchemaMatch(this.#schema ?? msg.schema, msg.schema);
+
+    const room = await this.room(msg.room);
+    return welcome({
+      node: this.node,
+      room: msg.room,
+      limits: this.#limits,
+      compression: msg.comp?.includes('deflate-raw') ? 'deflate-raw' : null,
+      have: room.log.frontier(),
+      serverTs: Date.now(),
+    });
+  }
+
+  /**
+   * The whole protocol in one handler: accept the client's operations, then
+   * answer with everything it is missing.
+   *
+   * Order matters. Applying the push *before* computing the pull means a
+   * client that just wrote something does not receive its own operations back,
+   * and two clients syncing in the same instant each see the other's work on
+   * the first round rather than the second.
+   */
+  async handleSync(msg, ctx = {}) {
+    validateMessage(msg, MessageType.SYNC);
+    await this.#authorized({ ...ctx, room: msg.room, node: msg.node });
+    assertSchemaMatch(this.#schema ?? msg.schema, msg.schema);
+
+    const room = await this.room(msg.room);
+    room.lastActivity = Date.now();
+
+    /* ---- push ---- */
+    let accepted = 0, duplicates = 0;
+    /** @type {Array<{op: string, reason: string}>} */
+    const rejected = [];
+    let fresh = [];
+
+    if (msg.push) {
+      const incoming = this.#decodePush(msg.push, rejected);
+      // Only operations the sender actually issued. Accepting operations
+      // attributed to another replica would let one client forge another's
+      // history -- and forged sequence numbers would block the real ones.
+      const own = [];
+      for (const op of incoming) {
+        if (op.node !== msg.node) rejected.push({ op: `${op.node}:${op.seq}`, reason: 'foreign-replica' });
+        else own.push(op);
+      }
+
+      if (own.length > this.#limits.maxOpsPerPush) {
+        throw new ProtocolError('push exceeds the server limit', {
+          got: own.length, limit: this.#limits.maxOpsPerPush,
+        });
+      }
+
+      const result = await room.log.append(own);
+      accepted = result.added;
+      duplicates = result.duplicates;
+      fresh = result.fresh;
+
+      if (fresh.length) {
+        room.broadcast(fresh, msg.node);
+        this.emit('ops', { room: msg.room, from: msg.node, count: fresh.length });
+      }
+    }
+
+    /* ---- pull ---- */
+    const clientHas = readVector(msg);
+    const limit = Math.min(msg.limit ?? this.#limits.maxOpsPerPull, this.#limits.maxOpsPerPull);
+    const { ops: outgoing, more } = await room.log.delta(clientHas, { limit });
+
+    return ack({
+      node: this.node,
+      accepted, duplicates, rejected,
+      pull: outgoing.length ? encodeOps(outgoing) : undefined,
+      have: room.log.frontier(),
+      // How far the client's own history has been durably accepted. The client
+      // advances its outbox watermark to exactly this and no further.
+      you: room.log.frontier().get(msg.node),
+      more,
+      serverTs: Date.now(),
+    });
+  }
+
+  /**
+   * Decode a push, keeping malformed operations from poisoning the batch.
+   * A bad operation is reported and dropped; it must never reach the log,
+   * because every replica would replay it forever.
+   */
+  #decodePush(push, rejected) {
+    try {
+      return decodeOps(push);
+    } catch (err) {
+      if (err instanceof RivuletError) {
+        rejected.push({ op: '*', reason: err.code });
+        throw new ProtocolError('push batch could not be decoded', { cause: err.message });
+      }
+      throw err;
+    }
+  }
+
+  /**
+   * Register a live listener for a room, and report what it already missed.
+   * Returning the current frontier lets a client that just connected decide
+   * whether it needs a catch-up sync before trusting the stream.
+   */
+  async subscribe(roomName, listener, { node } = {}) {
+    const room = await this.room(roomName);
+    if (node) listener.node = node;
+    const off = room.subscribe(listener);
+    this.emit('subscribe', { room: roomName, node, connections: room.connections });
+    return { off, have: room.log.frontier() };
+  }
+
+  /** Turn any error into a protocol-level error message. */
+  static toErrorMessage(err) {
+    if (err instanceof RivuletError) return errorMessage(err.code, err.message, err.details);
+    return errorMessage('E_INTERNAL', 'internal server error');
+  }
+
+  /** HTTP status for an error, so the transport layer has no error taxonomy. */
+  static statusFor(err) {
+    switch (err?.code) {
+      case 'E_AUTH': return 403;
+      case 'E_VALIDATION': return 400;
+      case 'E_PROTOCOL': return 400;
+      case 'E_STORAGE': return 503;
+      default: return 500;
+    }
+  }
+
+  async stats() {
+    const rooms = [];
+    for (const [name, entry] of this.#rooms) {
+      if (entry instanceof Promise) continue;
+      rooms.push({
+        name,
+        operations: await entry.log.count(),
+        replicas: entry.log.frontier().size,
+        connections: entry.connections,
+        bytes: await entry.log.sizeBytes(),
+        lastActivity: entry.lastActivity,
+      });
+    }
+    return { node: this.node, rooms, limits: this.#limits };
+  }
+
+  /**
+   * Snapshot a room and drop the operations it covers.
+   *
+   * Only safe up to a frontier every client has: anything newer may still be
+   * the answer to a pull from a replica that has been offline. `minFrontier`
+   * is that bound, and must come from tracking connected clients, not guessed.
+   */
+  async compactRoom(name, materialise, minFrontier) {
+    const room = await this.room(name);
+    const ops = await room.log.read();
+    const state = materialise(ops);
+    return room.log.compact(state, minFrontier instanceof VersionVector ? minFrontier.toJSON() : minFrontier);
+  }
+
+  async close() {
+    for (const entry of this.#rooms.values()) {
+      const room = entry instanceof Promise ? await entry : entry;
+      room.listeners.clear();
+      await room.log.close();
+    }
+    this.#rooms.clear();
+  }
+}
