@@ -43,6 +43,7 @@ import { SyncServer } from '#server/engine';
 export class LoopbackTransport extends Emitter {
   #server;
   #node;
+  #compress;
   #unsubscribe = null;
   /** Optional hook used by the benchmarks to impose latency and loss. */
   #link;
@@ -52,16 +53,19 @@ export class LoopbackTransport extends Emitter {
    * @param {object} opts
    * @param {string} opts.node client replica id
    * @param {string} [opts.room]
-   * @param {(fn: () => Promise<any>, msg: object) => Promise<any>} [opts.link]
-   *   wraps each request, so the benchmarks can impose latency, loss and
-   *   partitions without the engine knowing anything about it
+   * @param {(exchange: () => Promise<{reply: object, upBytes: number, downBytes: number}>, msg: object) => Promise<object>} [opts.link]
+   *   wraps each request, so the benchmarks can impose latency, bandwidth,
+   *   loss and partitions without the engine knowing anything about it. The
+   *   exchange reports frame sizes, which is what lets a simulated link model
+   *   transmission time rather than latency alone.
    */
-  constructor(server, { node, room = 'default', link } = {}) {
+  constructor(server, { node, room = 'default', link, compress = true } = {}) {
     super();
     this.#server = server;
     this.#node = node;
     this.room = room;
-    this.#link = link ?? ((fn) => fn());
+    this.#compress = compress;
+    this.#link = link ?? (async (exchange) => (await exchange()).reply);
     this.meter = new ByteMeter();
     this.supportsPush = true;
   }
@@ -71,7 +75,7 @@ export class LoopbackTransport extends Emitter {
       // Round-trip through the codec even in-process, so the tests exercise
       // the same encode/decode path production uses -- and so byte accounting
       // in the benchmarks is real rather than assumed.
-      const frame = await packMessage(message);
+      const frame = await packMessage(message, { compress: this.#compress });
       this.meter.recordSend(frame);
       const sent = await unpackMessage(frame.bytes, frame.encoding);
 
@@ -84,9 +88,13 @@ export class LoopbackTransport extends Emitter {
         throw this.#translate(err);
       }
 
-      const back = await packMessage(reply);
+      const back = await packMessage(reply, { compress: this.#compress });
       this.meter.recordReceive(back);
-      return unpackMessage(back.bytes, back.encoding);
+      return {
+        reply: await unpackMessage(back.bytes, back.encoding),
+        upBytes: frame.wireBytes,
+        downBytes: back.wireBytes,
+      };
     }, message);
   }
 
