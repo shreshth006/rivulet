@@ -1,0 +1,209 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { SyncServer } from '#server/engine';
+import { HttpSyncServer } from '#server/http';
+import { HttpTransport } from '#client/transport';
+import { RivuletClient } from '#client/client';
+import { MemoryAdapter } from '#storage/adapter';
+import { notebookSchema } from '../../test/helpers/fixtures.js';
+import { AuthError, TransportError } from '#core/errors';
+import { nodeIdFromLabel } from '#core/ids';
+
+/** Start a real HTTP server on an ephemeral port. */
+async function serve({ token, schema = notebookSchema } = {}) {
+  const engine = new SyncServer({
+    storage: async (room) => new MemoryAdapter({ name: room }),
+    schema: schema.fingerprint,
+  });
+  return new HttpSyncServer({ engine, token }).listen(0);
+}
+
+/**
+ * Poll until `predicate` holds. Sleeping a fixed interval and asserting makes
+ * a test that passes on a quiet machine and fails on a busy one; waiting for
+ * the condition itself is both faster and deterministic.
+ */
+async function waitFor(predicate, { timeoutMs = 3000, label = 'condition' } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await predicate();
+    if (value) return value;
+    if (Date.now() > deadline) throw new Error(`timed out waiting for ${label}`);
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
+async function connect(server, label, { token, room = 'http-room' } = {}) {
+  const node = nodeIdFromLabel(label);
+  return RivuletClient.open({
+    schema: notebookSchema, room, node,
+    storage: new MemoryAdapter({ name: label }),
+    transport: new HttpTransport({ url: server.url, room, node, token }),
+    sync: { pollMs: 1e9, debounceMs: 1e9 },
+  });
+}
+
+test('two clients sync over real HTTP', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const a = await connect(server, 'http-a');
+  const b = await connect(server, 'http-b');
+  t.after(() => Promise.all([a.close(), b.close()]));
+
+  const id = a.mutate((tx) => tx.create('notes', {
+    title: 'over the wire', body: 'hello from a real socket', tags: ['net'],
+  }));
+  await a.syncUntilIdle();
+  await b.syncUntilIdle();
+
+  assert.equal(b.get('notes', id).title, 'over the wire');
+  assert.deepEqual(b.get('notes', id).tags, ['net']);
+
+  // And back the other way.
+  b.mutate((tx) => tx.add('notes', id, 'tags', 'reply'));
+  await b.syncUntilIdle();
+  await a.syncUntilIdle();
+  assert.deepEqual(a.get('notes', id).tags.sort(), ['net', 'reply']);
+});
+
+test('a large sync is compressed on the wire', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const a = await connect(server, 'big-a');
+  t.after(() => a.close());
+
+  const id = a.mutate((tx) => tx.create('notes', { title: 'bulk', body: '' }));
+  a.mutate((tx) => tx.setText('notes', id, 'body', 'the quick brown fox jumps. '.repeat(50)));
+  await a.syncUntilIdle();
+
+  const meter = a.engine.stats.bytes;
+  assert.ok(meter.sentWire < meter.sentRaw,
+    `expected compression, sent ${meter.sentWire}B of ${meter.sentRaw}B raw`);
+  assert.equal(await a.pendingCount(), 0);
+});
+
+test('the event stream notifies a peer that something changed', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const a = await connect(server, 'sse-a');
+  const b = await connect(server, 'sse-b');
+  t.after(() => Promise.all([a.close(), b.close()]));
+
+  const room = 'http-room';
+  const events = [];
+  const transport = new HttpTransport({ url: server.url, room, node: b.node });
+  const off = await transport.subscribe((msg) => events.push(msg));
+  t.after(() => { off(); transport.close(); });
+
+  // The first frame confirms the subscription is live before anything is
+  // written, so the notification cannot be missed by subscribing too late.
+  await waitFor(() => events[0]?.t === 'ready', { label: 'stream ready' });
+
+  a.mutate((tx) => tx.create('notes', { title: 'notify me' }));
+  await a.syncUntilIdle();
+
+  const change = await waitFor(() => events.find((e) => e.t === 'event'),
+    { label: 'change notification' });
+  assert.equal(change.n, 1, 'the frame reports a count, not the operations');
+});
+
+test('a bearer token is enforced on both endpoints', async (t) => {
+  const server = await serve({ token: 'secret' });
+  t.after(() => server.close());
+
+  const good = await connect(server, 'auth-ok', { token: 'secret' });
+  t.after(() => good.close());
+  good.mutate((tx) => tx.create('notes', { title: 'allowed' }));
+  await good.syncUntilIdle();
+  assert.equal(good.status, 'live');
+
+  const bad = await connect(server, 'auth-bad', { token: 'wrong' });
+  t.after(() => bad.close());
+  assert.equal(bad.status, 'unauthorised', 'a bad token must not retry forever');
+
+  const stream = new HttpTransport({ url: server.url, room: 'http-room', node: bad.node, token: 'wrong' });
+  await assert.rejects(() => stream.subscribe(() => {}), TransportError);
+});
+
+test('an unauthorised client stops retrying instead of spinning', async (t) => {
+  const server = await serve({ token: 'secret' });
+  t.after(() => server.close());
+
+  const node = nodeIdFromLabel('no-token');
+  const transport = new HttpTransport({ url: server.url, room: 'http-room', node });
+  await assert.rejects(() => transport.request({ t: 'sync', node, room: 'http-room', have: {} }), AuthError);
+});
+
+test('health and stats report the server state', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const a = await connect(server, 'stats-a');
+  t.after(() => a.close());
+
+  a.mutate((tx) => tx.create('notes', { title: 'counted' }));
+  await a.syncUntilIdle();
+
+  const health = await (await fetch(`${server.url}/v1/health`)).json();
+  assert.equal(health.ok, true);
+
+  const stats = await (await fetch(`${server.url}/v1/stats`)).json();
+  assert.equal(stats.rooms.length, 1);
+  assert.equal(stats.rooms[0].name, 'http-room');
+  assert.ok(stats.rooms[0].operations >= 1);
+});
+
+test('unknown routes 404 rather than hanging', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const res = await fetch(`${server.url}/nope`);
+  assert.equal(res.status, 404);
+  assert.deepEqual(await res.json(), { error: 'not found' });
+});
+
+test('an oversized body is refused', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+
+  const res = await fetch(`${server.url}/v1/sync`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: 'x'.repeat(5 * 1024 * 1024),
+  }).catch((err) => ({ status: 0, err }));
+
+  assert.ok(res.status === 400 || res.status === 0, `expected rejection, got ${res.status}`);
+});
+
+test('a malformed body produces a protocol error, not a crash', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+
+  const res = await fetch(`${server.url}/v1/sync`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: '{"t":"sync","node":"not-a-node-id","room":"r"}',
+  });
+  assert.equal(res.status, 400);
+  const body = await res.json();
+  assert.equal(body.code, 'E_PROTOCOL');
+
+  // The server is still healthy afterwards.
+  assert.equal((await (await fetch(`${server.url}/v1/health`)).json()).ok, true);
+});
+
+test('the stream endpoint requires a room', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const res = await fetch(`${server.url}/v1/stream`);
+  assert.equal(res.status, 400);
+});
+
+test('an unreachable server surfaces as a retryable transport error', async () => {
+  const node = nodeIdFromLabel('lonely');
+  const transport = new HttpTransport({
+    url: 'http://127.0.0.1:1', room: 'r', node, timeoutMs: 500,
+  });
+  await assert.rejects(
+    () => transport.request({ t: 'sync', node, room: 'r', have: {} }),
+    (err) => err instanceof TransportError && err.retryable === true,
+  );
+});
