@@ -79,6 +79,7 @@ export class SyncServer extends Emitter {
   #limits;
   #authorize;
   #schema;
+  #codec;
 
   /**
    * @param {object} opts
@@ -87,8 +88,10 @@ export class SyncServer extends Emitter {
    * @param {(ctx: object) => (boolean|Promise<boolean>)} [opts.authorize]
    * @param {object} [opts.limits]
    * @param {string} [opts.node] fixed server id (tests); otherwise minted
+   * @param {{encode: Function, decode: Function}} [opts.codec] operation batch
+   *   encoding; must match what clients use
    */
-  constructor({ storage, schema, authorize, limits, node } = {}) {
+  constructor({ storage, schema, authorize, limits, node, codec } = {}) {
     super();
     if (typeof storage !== 'function') {
       throw new ValidationError('SyncServer needs a storage factory');
@@ -98,6 +101,7 @@ export class SyncServer extends Emitter {
     this.#authorize = authorize ?? (() => true);
     this.#limits = { ...DEFAULT_LIMITS, ...limits };
     this.#node = node ?? null;
+    this.#codec = codec ?? { encode: encodeOps, decode: decodeOps };
   }
 
   get node() { return (this.#node ??= newNodeId()); }
@@ -204,7 +208,7 @@ export class SyncServer extends Emitter {
     return ack({
       node: this.node,
       accepted, duplicates, rejected,
-      pull: outgoing.length ? encodeOps(outgoing) : undefined,
+      pull: outgoing.length ? this.#codec.encode(outgoing) : undefined,
       have: room.log.frontier(),
       // How far the client's own history has been durably accepted. The client
       // advances its outbox watermark to exactly this and no further.
@@ -221,7 +225,7 @@ export class SyncServer extends Emitter {
    */
   #decodePush(push, rejected) {
     try {
-      return decodeOps(push);
+      return this.#codec.decode(push);
     } catch (err) {
       if (err instanceof RivuletError) {
         rejected.push({ op: '*', reason: err.code });
