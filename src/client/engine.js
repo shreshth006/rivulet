@@ -39,6 +39,17 @@ import { RivuletError, AuthError } from '#core/errors';
 
 /** @typedef {'offline'|'connecting'|'syncing'|'live'|'unauthorised'} Status */
 
+/**
+ * Largest delay a timer can express (2^31-1 ms, about 24.8 days).
+ *
+ * Exceeding it does not push the timer further out -- the runtime silently
+ * truncates to a 32-bit value, and a delay of, say, 4e9 ms fires after 1ms.
+ * That turns an idle poll into a spin loop that syncs continuously, which is
+ * exactly the opposite of what a long interval was asking for, and on a
+ * metered link would be expensive as well as wrong.
+ */
+const MAX_TIMER_DELAY = 2_147_483_647;
+
 export const Status = Object.freeze({
   OFFLINE: 'offline',
   CONNECTING: 'connecting',
@@ -59,6 +70,7 @@ export class SyncEngine extends Emitter {
   #running = false;
   #attempt = 0;
   #inFlight = null;
+  #queued = null;
   #timer = null;
   #unsubscribe = null;
   #dirty = false;
@@ -67,6 +79,7 @@ export class SyncEngine extends Emitter {
   #opts;
   #timers;
   #beforeSync;
+  #codec;
 
   /**
    * @param {object} opts
@@ -83,12 +96,15 @@ export class SyncEngine extends Emitter {
    *   the client uses it to flush local writes into the log first, so a sync
    *   can never read an outbox that a just-committed transaction has not
    *   reached yet
+   * @param {{encode: Function, decode: Function}} [opts.codec] operation batch
+   *   encoding. Swappable so the evaluation can measure a naive baseline
+   *   through the identical protocol and transport rather than modelling it.
    * @param {object} [opts.timers] injectable setTimeout/clearTimeout/now, for tests
    */
   constructor({
     db, log, transport, room, schema,
     pollMs = 15_000, debounceMs = 120, maxBackoffMs = 30_000,
-    batching, timers, beforeSync,
+    batching, timers, beforeSync, codec,
   }) {
     super();
     this.#db = db;
@@ -97,6 +113,7 @@ export class SyncEngine extends Emitter {
     this.#room = room;
     this.#schema = schema;
     this.#batcher = new AdaptiveBatcher(batching);
+    this.#codec = codec ?? { encode: encodeOps, decode: decodeOps };
     this.#beforeSync = beforeSync ?? (() => Promise.resolve());
     this.#opts = { pollMs, debounceMs, maxBackoffMs };
     this.#timers = timers ?? {
@@ -145,6 +162,7 @@ export class SyncEngine extends Emitter {
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     await this.#inFlight?.catch(() => {});
+    await this.#queued?.catch(() => {});
     await this.#transport.close?.();
     this.#setStatus(Status.OFFLINE, { reason: 'stopped' });
   }
@@ -175,8 +193,12 @@ export class SyncEngine extends Emitter {
   async #openStream() {
     if (!this.#transport.supportsPush || typeof this.#transport.subscribe !== 'function') return;
     try {
-      this.#unsubscribe = await this.#transport.subscribe(() => {
-        // The message body is not trusted to be complete; it is a nudge.
+      this.#unsubscribe = await this.#transport.subscribe((msg) => {
+        // The stream's opening frame only confirms the subscription; syncing
+        // on it would duplicate the round `#connect` is about to run anyway.
+        if (msg?.t === 'ready') return;
+        // Anything else is a nudge. The body is not trusted to be complete --
+        // the engine reacts by syncing through the normal path.
         this.#schedule(0);
       });
       this.#transport.on?.('stream-closed', () => {
@@ -198,7 +220,7 @@ export class SyncEngine extends Emitter {
     this.#timer = this.#timers.setTimeout(() => {
       this.#timer = null;
       this.sync().catch(() => {});
-    }, Math.max(0, delay));
+    }, Math.min(Math.max(0, delay), MAX_TIMER_DELAY));
     // A pending poll must not by itself keep a Node process alive: a CLI that
     // has finished its work should exit, not wait out the next interval.
     this.#timer?.unref?.();
@@ -233,14 +255,27 @@ export class SyncEngine extends Emitter {
   /* ----------------------------------------------------------------- sync */
 
   /**
-   * One reconciliation round, repeated while the server reports more to send.
-   * Concurrent callers share the in-flight round rather than stacking requests.
+   * Reconcile now: rounds repeat while the server reports more to send.
+   *
+   * A caller gets a round that begins *after* the call. Handing back a round
+   * already in flight would be subtly wrong -- it started before the caller's
+   * write existed, so it can report "nothing to do" for work it never saw, and
+   * `await client.sync()` would not mean what it says.
+   *
+   * At most one follow-up is queued, so concurrent callers coalesce onto a
+   * single extra round instead of stacking a request each.
+   *
    * @returns {Promise<{pushed: number, pulled: number, rounds: number}>}
    */
   async sync() {
-    if (this.#inFlight) return this.#inFlight;
-    this.#inFlight = this.#syncLoop().finally(() => { this.#inFlight = null; });
-    return this.#inFlight;
+    if (!this.#inFlight) {
+      this.#inFlight = this.#syncLoop().finally(() => { this.#inFlight = null; });
+      return this.#inFlight;
+    }
+    this.#queued ??= this.#inFlight
+      .catch(() => {})
+      .then(() => { this.#queued = null; return this.sync(); });
+    return this.#queued;
   }
 
   async #syncLoop() {
@@ -284,7 +319,7 @@ export class SyncEngine extends Emitter {
 
     const request = syncMessage({
       node, room: this.#room, have,
-      push: outbox.length ? encodeOps(outbox) : undefined,
+      push: outbox.length ? this.#codec.encode(outbox) : undefined,
       limit,
       schema: this.#schema,
     });
@@ -305,7 +340,7 @@ export class SyncEngine extends Emitter {
     /* ---- their push ---- */
     let applied = 0;
     if (reply.pull) {
-      const incoming = decodeOps(reply.pull);
+      const incoming = this.#codec.decode(reply.pull);
       const { fresh } = await this.#log.append(incoming);
       // Only genuinely new operations reach the CRDTs; see the op log's contract.
       this.#db.applyAll(fresh);
