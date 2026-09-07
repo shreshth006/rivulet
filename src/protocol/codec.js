@@ -48,6 +48,45 @@ import { validateOp } from '#core/op';
 
 export const CODEC_VERSION = 2;
 
+/**
+ * The four transformations, individually switchable.
+ *
+ * Production always runs with all four on. They are separable so the
+ * evaluation can measure each one's actual contribution by ablation rather
+ * than asserting a split -- and so a regression in any one of them shows up as
+ * a number rather than a vague loss of efficiency.
+ *
+ * A batch records any non-default choice in its `o` field, so a decoder never
+ * has to be told which variant it is reading.
+ */
+export const DEFAULT_OPTIONS = Object.freeze({
+  intern: true,    // dictionary-encode collection, document and field names
+  deltas: true,    // delta-encode sequence numbers and wall-clock times
+  backrefs: true,  // replace in-batch timestamp references with indices
+  rle: true,       // run-length encode the columns
+});
+
+/** Pack the option set into the compact `o` field, or omit it when default. */
+function optionField(opts) {
+  const diff = {};
+  for (const [k, v] of Object.entries(DEFAULT_OPTIONS)) {
+    if (opts[k] !== v) diff[k[0]] = opts[k] ? 1 : 0;
+  }
+  return Object.keys(diff).length ? diff : undefined;
+}
+
+/** Recover the option set a batch was encoded with. */
+function readOptions(batch) {
+  const o = batch.o;
+  if (!o) return DEFAULT_OPTIONS;
+  return {
+    intern: o.i === undefined ? DEFAULT_OPTIONS.intern : !!o.i,
+    deltas: o.d === undefined ? DEFAULT_OPTIONS.deltas : !!o.d,
+    backrefs: o.b === undefined ? DEFAULT_OPTIONS.backrefs : !!o.b,
+    rle: o.r === undefined ? DEFAULT_OPTIONS.rle : !!o.r,
+  };
+}
+
 /* -------------------------------------------------------------- run-length */
 
 /**
@@ -173,9 +212,12 @@ function unpackPayload(payload, timestamps) {
 
 /**
  * @param {Array<import('#core/op').Op>} ops
+ * @param {Partial<typeof DEFAULT_OPTIONS>} [options] ablation switches; see
+ *   {@link DEFAULT_OPTIONS}. Production leaves this alone.
  * @returns {object} a compact, JSON-serialisable batch
  */
-export function encodeOps(ops) {
+export function encodeOps(ops, options) {
+  const opts = options ? { ...DEFAULT_OPTIONS, ...options } : DEFAULT_OPTIONS;
   if (ops.length === 0) return { v: CODEC_VERSION, n: 0 };
 
   const nodes = new Dictionary();
@@ -191,8 +233,14 @@ export function encodeOps(ops) {
   /** last seq seen per node, so seq can be delta-encoded per replica */
   const lastSeq = new Map();
 
-  let base = Infinity;
-  for (const op of ops) base = Math.min(base, parseTimestamp(op.ts).wall);
+  const maybeRle = opts.rle ? rle : (col) => col;
+  const intern = (dict, value) => (opts.intern ? dict.intern(value) : value);
+
+  let base = 0;
+  if (opts.deltas) {
+    base = Infinity;
+    for (const op of ops) base = Math.min(base, parseTimestamp(op.ts).wall);
+  }
 
   ops.forEach((op, i) => {
     const ts = parseTimestamp(op.ts);
@@ -203,34 +251,44 @@ export function encodeOps(ops) {
       });
     }
 
-    const nodeIdx = nodes.intern(op.node);
+    const nodeIdx = intern(nodes, op.node);
     nodeCol.push(nodeIdx);
     // First operation from a replica carries its absolute sequence number;
     // the rest are deltas, which are almost always exactly 1.
-    seqCol.push(lastSeq.has(nodeIdx) ? op.seq - lastSeq.get(nodeIdx) : op.seq);
-    lastSeq.set(nodeIdx, op.seq);
+    if (opts.deltas) {
+      seqCol.push(lastSeq.has(op.node) ? op.seq - lastSeq.get(op.node) : op.seq);
+      lastSeq.set(op.node, op.seq);
+    } else {
+      seqCol.push(op.seq);
+    }
 
     wallCol.push(ts.wall - base);
     counterCol.push(ts.counter);
-    colCol.push(collections.intern(op.collection));
-    docCol.push(docs.intern(op.doc));
-    fieldCol.push(fields.intern(op.field));
+    colCol.push(intern(collections, op.collection));
+    docCol.push(intern(docs, op.doc));
+    fieldCol.push(intern(fields, op.field));
 
     // Pack against operations already emitted, then register this one so later
     // operations in the batch can point back at it.
-    payloads.push(packPayload(op.payload, tsIndex));
+    payloads.push(opts.backrefs ? packPayload(op.payload, tsIndex) : op.payload);
     tsIndex.set(op.ts, i);
   });
 
-  return {
+  const batch = {
     v: CODEC_VERSION,
     n: ops.length,
     b: base,
-    N: nodes.values, C: collections.values, D: docs.values, F: fields.values,
-    ni: rle(nodeCol), sq: rle(seqCol), wl: rle(wallCol), ct: rle(counterCol),
-    ci: rle(colCol), di: rle(docCol), fi: rle(fieldCol),
+    ni: maybeRle(nodeCol), sq: maybeRle(seqCol), wl: maybeRle(wallCol), ct: maybeRle(counterCol),
+    ci: maybeRle(colCol), di: maybeRle(docCol), fi: maybeRle(fieldCol),
     p: payloads,
   };
+  if (opts.intern) {
+    batch.N = nodes.values; batch.C = collections.values;
+    batch.D = docs.values; batch.F = fields.values;
+  }
+  const o = optionField(opts);
+  if (o) batch.o = o;
+  return batch;
 }
 
 /* -------------------------------------------------------------------- decode */
@@ -249,6 +307,7 @@ export function decodeOps(batch, { validate = true } = {}) {
   const count = batch.n ?? 0;
   if (count === 0) return [];
 
+  const opts = readOptions(batch);
   const { N: nodes = [], C: cols = [], D: docs = [], F: fields = [], b: base } = batch;
   if (!Number.isFinite(base)) throw new ProtocolError('batch is missing its timestamp base', { base });
 
@@ -264,7 +323,9 @@ export function decodeOps(batch, { validate = true } = {}) {
     throw new ProtocolError('payload count mismatch', { got: payloads.length, expected: count });
   }
 
+  // Without interning the column holds the value itself rather than an index.
   const pick = (table, i, what) => {
+    if (!opts.intern) return i;
     const v = table[i];
     if (v === undefined) throw new ProtocolError(`${what} index out of range`, { index: i, size: table.length });
     return v;
@@ -276,10 +337,14 @@ export function decodeOps(batch, { validate = true } = {}) {
   const out = new Array(count);
 
   for (let i = 0; i < count; i++) {
-    const nodeIdx = nodeCol[i];
-    const node = pick(nodes, nodeIdx, 'node');
-    const seq = lastSeq.has(nodeIdx) ? lastSeq.get(nodeIdx) + seqCol[i] : seqCol[i];
-    lastSeq.set(nodeIdx, seq);
+    const node = pick(nodes, nodeCol[i], 'node');
+    let seq;
+    if (opts.deltas) {
+      seq = lastSeq.has(node) ? lastSeq.get(node) + seqCol[i] : seqCol[i];
+      lastSeq.set(node, seq);
+    } else {
+      seq = seqCol[i];
+    }
 
     const ts = encodeTimestamp(base + wallCol[i], counterCol[i], node);
     timestamps[i] = ts;
@@ -289,7 +354,7 @@ export function decodeOps(batch, { validate = true } = {}) {
       collection: pick(cols, colCol[i], 'collection'),
       doc: pick(docs, docCol[i], 'doc'),
       field: pick(fields, fieldCol[i], 'field'),
-      payload: unpackPayload(payloads[i], timestamps),
+      payload: opts.backrefs ? unpackPayload(payloads[i], timestamps) : payloads[i],
     };
     out[i] = validate ? validateOp(op) : op;
   }
@@ -304,9 +369,9 @@ export function encodeOpsPlain(ops) { return ops; }
  * evaluation section. Reported honestly: `plain` is the same operations as
  * ordinary JSON, which is what a naive implementation would put on the wire.
  */
-export function measure(ops) {
+export function measure(ops, options) {
   const plain = JSON.stringify(ops).length;
-  const packed = JSON.stringify(encodeOps(ops)).length;
+  const packed = JSON.stringify(encodeOps(ops, options)).length;
   return {
     ops: ops.length,
     plainBytes: plain,
@@ -320,14 +385,18 @@ export function measure(ops) {
 export function firstSeqs(batch) {
   const out = new Map();
   if (!batch?.n) return out;
+  const opts = readOptions(batch);
   const nodeCol = unrle(batch.ni, batch.n);
   const seqCol = unrle(batch.sq, batch.n);
   const lastSeq = new Map();
   for (let i = 0; i < batch.n; i++) {
-    const idx = nodeCol[i];
-    const seq = lastSeq.has(idx) ? lastSeq.get(idx) + seqCol[i] : seqCol[i];
-    lastSeq.set(idx, seq);
-    if (!out.has(batch.N[idx])) out.set(batch.N[idx], seq);
+    const node = opts.intern ? batch.N[nodeCol[i]] : nodeCol[i];
+    let seq;
+    if (opts.deltas) {
+      seq = lastSeq.has(node) ? lastSeq.get(node) + seqCol[i] : seqCol[i];
+      lastSeq.set(node, seq);
+    } else seq = seqCol[i];
+    if (!out.has(node)) out.set(node, seq);
   }
   return out;
 }
