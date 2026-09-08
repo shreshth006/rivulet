@@ -23,10 +23,13 @@ import { nodeIdFromLabel } from '#core/ids';
  * @param {string|object} [opts.profile] profile name or object
  * @param {number} [opts.seed]
  * @param {object} [opts.sync] sync engine options
+ * @param {{encode: Function, decode: Function}} [opts.codec] swap in the naive
+ *   baseline encoding; client and server must agree
+ * @param {boolean} [opts.compress] transport-level DEFLATE
  */
 export async function buildCluster({
   schema, clients = 2, profile = 'lan', seed = 1, room = 'bench',
-  sync: syncOpts, autoStart = false,
+  sync: syncOpts, autoStart = false, codec, compress = true,
 }) {
   const net = typeof profile === 'string' ? getProfile(profile) : profile;
   const clock = new VirtualClock();
@@ -35,6 +38,7 @@ export async function buildCluster({
     storage: async () => new MemoryAdapter(),
     schema: schema.fingerprint,
     node: nodeIdFromLabel('bench-server'),
+    codec,
   });
 
   const members = [];
@@ -43,7 +47,7 @@ export async function buildCluster({
     // the random stream the others see.
     const link = new SimulatedLink({ profile: net, clock, seed: seed * 1000 + i });
     const node = nodeIdFromLabel(`${room}-client-${i}`);
-    const transport = new LoopbackTransport(server, { node, room, link: link.hook });
+    const transport = new LoopbackTransport(server, { node, room, link: link.hook, compress });
 
     const client = await RivuletClient.open({
       schema, room, node, transport,
@@ -55,7 +59,7 @@ export async function buildCluster({
       // The engine must use simulated time for backoff and polling, or the
       // benchmark would wait in real seconds for a simulated retry.
       physical: clock.readonly,
-      sync: { timers: clock.timers, pollMs: 1e9, debounceMs: 1e9, ...syncOpts },
+      sync: { timers: clock.timers, pollMs: 1e9, debounceMs: 1e9, codec, ...syncOpts },
     });
     client.label = `c${i}`;
     client.link = link;
@@ -63,15 +67,13 @@ export async function buildCluster({
   }
 
   // Start every engine together, driving the clock so their handshakes can
-  // complete against the simulated link.
-  if (autoStart) {
-    await clock.drive(Promise.all(members.map((c) => c.engine.start())));
-  } else {
-    // Engines must still be running for syncs to be attempted; start them
-    // without the initial handshake round by marking them started and letting
-    // the first explicit sync do the work.
-    await clock.drive(Promise.all(members.map((c) => c.engine.start())));
-  }
+  // complete against the simulated link. Engines must be running for syncs to
+  // be attempted at all, so this happens whether or not `autoStart` was asked
+  // for -- the flag only controls whether `open()` did it.
+  await clock.drive(Promise.all(members.map((c) => c.engine.start())));
+
+  // The handshake is setup, not part of what any scenario measures.
+  for (const c of members) c.link.reset();
 
   return {
     clock, server, net,
@@ -85,7 +87,8 @@ export async function buildCluster({
 
     /** Combined link statistics. */
     get network() {
-      const out = { requests: 0, delivered: 0, lostUplink: 0, lostDownlink: 0, refused: 0, bytesUp: 0, bytesDown: 0 };
+      const out = { requests: 0, delivered: 0, lostUplink: 0, lostDownlink: 0,
+        interrupted: 0, timedOut: 0, refused: 0, bytesUp: 0, bytesDown: 0 };
       for (const c of members) for (const k of Object.keys(out)) out[k] += c.link.stats[k];
       return { ...out, totalBytes: out.bytesUp + out.bytesDown };
     },
