@@ -186,9 +186,10 @@ export class HttpTransport extends Emitter {
       });
     } catch (err) {
       // Unreachable, DNS failure, timeout: all retryable, all the same to us.
+      const timedOut = controller.signal.aborted;
       throw new TransportError(
-        controller.signal.aborted ? 'request timed out' : 'could not reach the server',
-        { url: this.#base, cause: String(err) },
+        timedOut ? 'request timed out' : 'could not reach the server',
+        { kind: timedOut ? 'timeout' : 'unreachable', url: this.#base, cause: String(err) },
       );
     } finally {
       clearTimeout(timer);
@@ -200,6 +201,8 @@ export class HttpTransport extends Emitter {
     if (!response.ok) {
       const body = await response.text().catch(() => '');
       throw new TransportError(`server returned ${response.status}`, {
+        // 408 and 504 mean the request itself took too long.
+        kind: response.status === 408 || response.status === 504 ? 'timeout' : 'unreachable',
         status: response.status, body: body.slice(0, 200),
       });
     }
