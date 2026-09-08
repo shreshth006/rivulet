@@ -37,8 +37,8 @@ export class Link {
   partition() { this.partitioned = true; return this; }
   heal() { this.partitioned = false; return this; }
 
-  /** Wraps a transport request. */
-  async carry(fn) {
+  /** Wraps a transport request; see the `link` option on LoopbackTransport. */
+  async carry(exchange) {
     this.requests++;
     if (this.allowNext !== null) {
       if (this.allowNext > 0) this.allowNext--;
@@ -50,7 +50,8 @@ export class Link {
       throw new TransportError('simulated network failure');
     }
     if (this.latencyMs > 0) await new Promise((r) => setTimeout(r, this.latencyMs));
-    return fn();
+    const { reply } = await exchange();
+    return reply;
   }
 }
 
