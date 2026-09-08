@@ -233,9 +233,11 @@ export class SyncEngine extends Emitter {
     this.#schedule(this.#unsubscribe ? this.#opts.pollMs * 4 : this.#opts.pollMs);
   }
 
-  #handleFailure(err) {
+  #handleFailure(err, elapsedMs) {
     this.#lastError = err;
-    this.#batcher.fail();
+    // Only a failure that implicates the request's size should shrink the
+    // batch; see AdaptiveBatcher#fail.
+    this.#batcher.fail({ sizeRelated: err?.sizeRelated ?? false, ms: elapsedMs });
 
     if (err instanceof AuthError) {
       // Credentials will not fix themselves; retrying is pointless noise.
@@ -283,6 +285,7 @@ export class SyncEngine extends Emitter {
     this.#setStatus(Status.SYNCING);
 
     let pushed = 0, pulled = 0, rounds = 0;
+    const startedAt = this.#timers.now();
     try {
       for (;;) {
         const round = await this.#syncRound();
@@ -300,7 +303,7 @@ export class SyncEngine extends Emitter {
       this.#scheduleIdle();
       return { pushed, pulled, rounds };
     } catch (err) {
-      this.#handleFailure(err);
+      this.#handleFailure(err, this.#timers.now() - startedAt);
       return { pushed, pulled, rounds, error: err };
     }
   }
