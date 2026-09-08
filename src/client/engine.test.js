@@ -82,15 +82,31 @@ test('failures back off and recover without losing work', async (t) => {
   assert.equal(await a.pendingCount(), 0);
 });
 
-test('the batch size adapts downward when rounds keep failing', async (t) => {
+test('an unreachable server does not shrink the batch', async (t) => {
   const c = await makeCluster({ clients: 1, sync: { batching: { initial: 256, min: 8 } } });
   t.after(() => c.close());
   const [a] = c.clients;
 
   assert.equal(a.engine.batchSize, 256);
   a.link.partition();
+  for (let i = 0; i < 6; i++) await a.sync();
+
+  // Being offline says nothing about how much a round can carry. Shrinking
+  // here would mean every reconnection after an outage starts at the floor
+  // and crawls back up, which is exactly when there is most to transfer.
+  assert.equal(a.engine.batchSize, 256);
+});
+
+test('a timeout does shrink the batch, because the size is implicated', async (t) => {
+  const c = await makeCluster({ clients: 1, sync: { batching: { initial: 256, min: 8 } } });
+  t.after(() => c.close());
+  const [a] = c.clients;
+
+  a.link.failKind = 'timeout';
+  a.link.partition();
   for (let i = 0; i < 4; i++) await a.sync();
   assert.ok(a.engine.batchSize < 256, `expected backoff, still at ${a.engine.batchSize}`);
+  assert.ok(a.engine.batchSize >= 8, 'but never below the floor');
 });
 
 test('stopping the engine halts all activity', async (t) => {
