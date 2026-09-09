@@ -35,7 +35,7 @@ function heavyTextEditing({ revisions, seed }) {
     'the landlord says it is fine. ',
   ];
 
-  let ops = 0;
+  const allOps = [];
   let text = '';
   for (let i = 0; i < revisions; i++) {
     // Grow, then cut a chunk out of the middle: the pattern that produces
@@ -45,26 +45,27 @@ function heavyTextEditing({ revisions, seed }) {
       const at = randInt(rng, 0, Math.max(0, text.length - 60));
       text = text.slice(0, at) + text.slice(at + randInt(rng, 20, 60));
     }
-    ops += db.mutate((tx) => tx.setText('notes', id, 'body', text)).ops.length;
+    allOps.push(...db.mutate((tx) => tx.setText('notes', id, 'body', text)).ops);
   }
 
   const rga = db.document('notes', id).crdt('body');
-  return { db, id, ops, rga, text };
+  return { db, id, ops: allOps.length, allOps, rga, text };
 }
 
-export async function run({ seed = 7 } = {}) {
+export async function run({ seed = 7, sizes = [50, 200, 800, 2000] } = {}) {
   const report = new Report('overhead',
     'Memory cost of convergence metadata, and what collection reclaims.');
 
+  // Each rewrite walks the sequence, so generating a case is quadratic in the
+  // number of revisions. Generate each one once and derive every table from it.
+  const cases = sizes.map((revisions) => ({ revisions, ...heavyTextEditing({ revisions, seed }) }));
+
   /* ------------------------------------------- tombstone accumulation */
 
-  const rows = [];
-  for (const revisions of [50, 200, 800, 3200]) {
-    const { rga, ops, text } = heavyTextEditing({ revisions, seed });
+  const rows = cases.map(({ revisions, rga, ops, text }) => {
     const stats = rga.stats;
     const stateBytes = jsonBytes(rga);
-
-    rows.push({
+    return {
       revisions,
       ops,
       live: stats.live,
@@ -72,8 +73,8 @@ export async function run({ seed = 7 } = {}) {
       ratio: stats.tombstones / Math.max(1, stats.live),
       stateBytes,
       perLiveChar: stateBytes / Math.max(1, text.length),
-    });
-  }
+    };
+  });
 
   report.add('Tombstone accumulation under repeated rewriting', {
     columns: [
@@ -86,34 +87,40 @@ export async function run({ seed = 7 } = {}) {
       { key: 'perLiveChar', label: 'Bytes/live char', format: (n) => `${n.toFixed(0)} B` },
     ],
     rows,
-  }, 'A single text field rewritten repeatedly. The ratio is the honest cost '
-   + 'of position-free editing: deleted characters must be retained while any '
-   + 'replica might still anchor an insert on them.');
+  }, 'A deliberately hostile workload: a short field rewritten over and over, '
+   + 'so almost every character written is later deleted. It is an upper bound '
+   + 'on tombstone growth, not a typical document. The ratio is the honest '
+   + 'cost of position-free editing -- deleted characters must be retained '
+   + 'while any replica might still anchor an insert on them -- and the row '
+   + 'below shows what collection reclaims.');
 
   /* ---------------------------------------------------- what gc recovers */
 
-  const gcRows = [];
-  for (const revisions of [200, 800, 3200]) {
-    const { rga, db, id } = heavyTextEditing({ revisions, seed });
-    const before = { bytes: jsonBytes(rga), ...rga.stats };
+  // Destructive, so it runs last -- the tables above measure the uncollected
+  // state, which is what a replica actually carries between stability points.
+  const gcRows = cases.map((c) => {
+    const { revisions, rga, db, id } = c;
+    const beforeBytes = jsonBytes(rga);
+    const textBefore = rga.text;
+    c.snapshotBefore = jsonBytes(db.snapshot());
 
-    // Everything this replica holds is causally stable in a single-replica
-    // measurement; in a cluster the bound comes from the slowest peer.
-    const stable = db.clock.peek();
-    const reclaimed = rga.gc(stable);
-    const dropped = rga.dropRedirects();
-    const after = { bytes: jsonBytes(rga), ...rga.stats };
+    // In a single-replica measurement everything held is causally stable; in a
+    // cluster the bound comes from the slowest peer's frontier.
+    const reclaimed = rga.gc(db.clock.peek());
+    const redirects = rga.dropRedirects();
+    const afterBytes = jsonBytes(rga);
+    c.snapshotAfter = jsonBytes(db.snapshot());
 
-    gcRows.push({
+    return {
       revisions,
-      beforeBytes: before.bytes,
-      afterBytes: after.bytes,
+      beforeBytes,
+      afterBytes,
       reclaimed,
-      saving: 1 - after.bytes / before.bytes,
-      redirects: dropped,
-      textIntact: db.document('notes', id).get('body').length === rga.text.length,
-    });
-  }
+      redirects,
+      saving: 1 - afterBytes / beforeBytes,
+      textIntact: db.document('notes', id).get('body') === textBefore,
+    };
+  });
 
   report.add('Garbage collection at a causally stable point', {
     columns: [
@@ -129,38 +136,37 @@ export async function run({ seed = 7 } = {}) {
    + 'Operations that still name a collected tombstone are rebased onto its '
    + 'surviving neighbour, so a late arrival converges rather than dangling.');
 
-  /* ------------------------------------------- log versus materialised state */
+  /* -------------------------------- log versus compacted snapshot */
 
-  const compaction = [];
-  for (const revisions of [200, 800, 3200]) {
-    const { db, ops } = heavyTextEditing({ revisions, seed });
-    const log = await db.list('notes');
-    const allOps = [];
-    // Re-derive the operation log size as the storage layer would hold it.
-    const { ops: produced } = db.mutate((tx) => tx.set('notes', db.list('notes')[0].id, 'pinned', true));
-    allOps.push(...produced);
+  const compaction = cases.map((c) => {
+    const logBytes = jsonBytes(encodeOps(c.allOps));
+    return {
+      revisions: c.revisions,
+      operations: c.ops,
+      logBytes,
+      snapshotBefore: c.snapshotBefore,
+      snapshotAfter: c.snapshotAfter,
+      vsLog: 1 - c.snapshotAfter / Math.max(1, logBytes),
+      uncollectedVsLog: 1 - c.snapshotBefore / Math.max(1, logBytes),
+    };
+  });
 
-    const snapshot = db.snapshot();
-    compaction.push({
-      revisions,
-      operations: ops,
-      logBytes: ops * (jsonBytes(encodeOps(allOps)) / Math.max(1, allOps.length)),
-      snapshotBytes: jsonBytes(snapshot),
-      documents: log.length,
-    });
-  }
-
-  report.add('Operation log versus compacted snapshot', {
+  report.add('Bootstrap cost: operation log versus snapshot', {
     columns: [
       { key: 'revisions', label: 'Revisions', format: fmt.int },
       { key: 'operations', label: 'Operations', format: fmt.int },
-      { key: 'logBytes', label: 'Log (est.)', format: fmt.bytes },
-      { key: 'snapshotBytes', label: 'Snapshot', format: fmt.bytes },
+      { key: 'logBytes', label: 'Encoded log', format: fmt.bytes },
+      { key: 'snapshotBefore', label: 'Snapshot (uncollected)', format: fmt.bytes },
+      { key: 'snapshotAfter', label: 'Snapshot (collected)', format: fmt.bytes },
+      { key: 'vsLog', label: 'vs log', format: fmt.pct },
     ],
     rows: compaction,
-  }, 'Why compaction exists: the log grows with every edit ever made, while a '
-   + 'snapshot grows only with surviving state. A replica bootstrapping from a '
-   + 'snapshot pays the second, not the first.');
+  }, 'Compaction only pays once tombstones are collected. An uncollected '
+   + 'snapshot is no smaller than the encoded log -- it is slightly larger, '
+   + 'because it stores every element identifier in full while the codec '
+   + 'replaces in-batch references with integers. Applying the same interning '
+   + 'to the snapshot format would close that gap and is not done here. '
+   + 'Collected, the snapshot is what a new device should download.');
 
   return report;
 }
