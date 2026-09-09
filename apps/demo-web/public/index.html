@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rivulet — offline-first notebook</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🜄</text></svg>">
+
+<!--
+  The browser loads the engine's own source files. The import map mirrors the
+  `imports` field in package.json, so the same specifiers resolve in Node and
+  here, and the demo exercises exactly the code the tests exercise.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "#core/": "/src/core/",
+    "#protocol/": "/src/protocol/",
+    "#storage/": "/src/storage/",
+    "#client/": "/src/client/"
+  }
+}
+</script>
+</head>
+<body>
+
+<header class="bar">
+  <h1>Rivulet</h1>
+  <p class="tagline">An offline-first notebook. Everything you type is saved locally first.</p>
+  <div class="status" id="status">
+    <span class="dot" id="dot"></span>
+    <span id="status-text">starting…</span>
+    <button id="offline-toggle" class="ghost">Go offline</button>
+  </div>
+</header>
+
+<section class="explain" id="explain">
+  <p>
+    <strong>Try this:</strong> open this page in two windows side by side.
+    Click <em>Go offline</em> in one, edit the same note in both, then come
+    back online. Nothing is lost and no dialog asks you to choose.
+  </p>
+</section>
+
+<main>
+  <aside class="notes">
+    <div class="notes-head">
+      <h2>Notes</h2>
+      <button id="new-note">New</button>
+    </div>
+    <ul id="note-list"></ul>
+  </aside>
+
+  <article class="editor" id="editor" hidden>
+    <label class="field">
+      <span class="label">Title <em>last writer wins</em></span>
+      <input id="title" type="text" autocomplete="off">
+    </label>
+
+    <label class="field">
+      <span class="label">Body <em>character-level merge</em></span>
+      <textarea id="body" rows="12" spellcheck="false"></textarea>
+    </label>
+
+    <div class="row">
+      <label class="field grow">
+        <span class="label">Tags <em>add wins</em></span>
+        <div class="tags" id="tags"></div>
+        <input id="tag-input" type="text" placeholder="add a tag and press enter" autocomplete="off">
+      </label>
+
+      <div class="field">
+        <span class="label">Votes <em>increments add up</em></span>
+        <div class="counter">
+          <button id="vote-down">−</button>
+          <output id="votes">0</output>
+          <button id="vote-up">+</button>
+        </div>
+      </div>
+    </div>
+
+    <label class="field">
+      <span class="label">Estimate <em>keeps concurrent values</em></span>
+      <input id="estimate" type="number" autocomplete="off">
+      <div class="conflict" id="conflict" hidden></div>
+    </label>
+
+    <footer class="editor-foot">
+      <button id="delete-note" class="danger">Delete note</button>
+      <span class="doc-id" id="doc-id"></span>
+    </footer>
+  </article>
+
+  <section class="empty" id="empty">
+    <p>Select a note, or create one.</p>
+  </section>
+</main>
+
+<footer class="stats" id="stats">
+  <span title="This device's replica id">replica <code id="stat-node">…</code></span>
+  <span title="Operations written locally but not yet acknowledged by the server">pending <code id="stat-pending">0</code></span>
+  <span title="Operations stored in the local log">local ops <code id="stat-ops">0</code></span>
+  <span title="Bytes actually sent and received, after encoding and compression">wire <code id="stat-bytes">0 B</code></span>
+  <span title="Operations the engine sends per sync request, adapted to the link">batch <code id="stat-batch">–</code></span>
+</footer>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>
