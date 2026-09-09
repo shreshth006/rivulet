@@ -252,3 +252,28 @@ test('schema fingerprints are stable and detect drift', () => {
     'declaration order must not change the fingerprint',
   );
 });
+
+test('an untouched field reads the same as an emptied one, on every replica', () => {
+  const a = makeDb('a'), b = makeDb('b');
+  // `body` is never written: the create emits no operation for an empty text
+  // field, so b never materialises the CRDT at all while a does.
+  const seed = a.mutate((tx) => tx.create('notes', { title: 'no body', body: '' }));
+  deliver(seed.ops, b);
+  const id = seed.result;
+
+  assert.equal(a.get('notes', id).body, '', 'text reads as a string');
+  assert.deepEqual(a.get('notes', id), b.get('notes', id),
+    'identical state must render identically regardless of local history');
+
+  // The same must hold for the other empty forms.
+  assert.deepEqual(b.get('notes', id).tags, []);
+  assert.deepEqual(b.get('notes', id).checklist, []);
+  assert.equal(b.get('notes', id).reads, 0);
+  assert.equal(b.get('notes', id).estimate, null);
+
+  // And an emptied field must match a never-written one.
+  deliver(a.mutate((tx) => tx.setText('notes', id, 'body', 'x')).ops, b);
+  deliver(a.mutate((tx) => tx.setText('notes', id, 'body', '')).ops, b);
+  assert.equal(a.get('notes', id).body, '');
+  assert.deepEqual(a.get('notes', id), b.get('notes', id));
+});
