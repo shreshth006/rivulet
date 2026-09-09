@@ -207,3 +207,49 @@ test('an unreachable server surfaces as a retryable transport error', async () =
     (err) => err instanceof TransportError && err.retryable === true,
   );
 });
+
+test('static mounts serve modules with Node-style extension resolution', async (t) => {
+  const { HttpSyncServer } = await import('#server/http');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join } = await import('node:path');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  const engine = new SyncServer({ storage: async () => new MemoryAdapter() });
+  const server = await new HttpSyncServer({
+    engine, mounts: { '/src': join(root, 'src') },
+  }).listen(0);
+  t.after(() => server.close());
+
+  // Browsers do not add `.js`; the engine's own imports rely on it.
+  const extensionless = await fetch(`${server.url}/src/core/hlc`);
+  assert.equal(extensionless.status, 200);
+  assert.ok(extensionless.headers.get('content-type').startsWith('text/javascript'));
+  assert.ok((await extensionless.text()).includes('HybridClock'));
+
+  assert.equal((await fetch(`${server.url}/src/core/hlc.js`)).status, 200);
+  assert.equal((await fetch(`${server.url}/src/core/nope`)).status, 404);
+});
+
+test('static serving refuses to escape its mount root', async (t) => {
+  const { HttpSyncServer } = await import('#server/http');
+  const { fileURLToPath } = await import('node:url');
+  const { dirname, join } = await import('node:path');
+  const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+  const engine = new SyncServer({ storage: async () => new MemoryAdapter() });
+  const server = await new HttpSyncServer({ engine, mounts: { '/src': join(root, 'src') } }).listen(0);
+  t.after(() => server.close());
+
+  for (const attempt of [
+    '/src/../package.json',
+    '/src/../../etc/passwd',
+    '/src/%2e%2e/package.json',
+    '/src/core/../../package.json',
+  ]) {
+    const res = await fetch(`${server.url}${attempt}`);
+    assert.ok(res.status === 403 || res.status === 404,
+      `${attempt} must not be served, got ${res.status}`);
+    const body = await res.text();
+    assert.ok(!body.includes('"name": "rivulet"'), `${attempt} leaked a file outside the root`);
+  }
+});
