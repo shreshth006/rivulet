@@ -55,12 +55,27 @@ export class Document {
     return changed;
   }
 
-  /** Value of one field, rendered per its schema declaration. */
+  /**
+   * Value of one field, rendered per its schema declaration.
+   *
+   * The empty value must match the type's *rendered* form, not just its CRDT
+   * kind. A text field that has never been written reads as `""`, the same as
+   * one whose characters were all deleted -- otherwise two replicas holding
+   * identical state would display differently depending on whether the field
+   * happened to have been touched locally, and equality checks on the value
+   * would disagree across replicas.
+   */
   get(name) {
     const def = this.schema.field(name);
     const crdt = this.fields.get(name);
-    if (!crdt) return def.defaultValue ?? (def.type === 'counter' ? 0 : def.type === 'set' || def.type === 'seq' ? [] : null);
-    return def.asText ? crdt.text : crdt.value;
+    if (crdt) return def.asText ? crdt.text : crdt.value;
+    if (def.defaultValue !== undefined) return def.defaultValue;
+    switch (def.type) {
+      case 'counter': return 0;
+      case 'set': return [];
+      case 'seq': return def.asText ? '' : [];
+      default: return null;
+    }
   }
 
   /** Tombstoned documents stay in the store so the delete can still propagate. */
