@@ -90,7 +90,11 @@ export class RivuletClient extends Emitter {
    * @param {import('#core/schema').Schema} opts.schema
    * @param {string} opts.room synchronisation domain
    * @param {object} [opts.storage] adapter; chosen per environment if omitted
-   * @param {object} [opts.transport] omit for a purely local, offline database
+   * @param {object|((node: string) => object)} [opts.transport] omit for a
+   *   purely local, offline database. A function is called with this replica's
+   *   id once it has been restored from storage -- transports generally need
+   *   it, and it does not exist until the log has been opened, so passing a
+   *   factory is the only way to avoid constructing one with a placeholder
    * @param {boolean} [opts.autoStart]
    * @param {object} [opts.sync] {@link SyncEngine} options
    * @param {() => number} [opts.physical] injectable clock, for tests
@@ -129,11 +133,13 @@ export class RivuletClient extends Emitter {
 
     const schemaState = await log.checkSchema(schema.fingerprint);
 
+    const link = typeof transport === 'function' ? transport(node) : transport;
+
     /** @type {WriteQueue} */
     let writes;
-    const engine = transport
+    const engine = link
       ? new SyncEngine({
-        db, log, transport, room, schema: schema.fingerprint,
+        db, log, transport: link, room, schema: schema.fingerprint,
         beforeSync: () => writes.drain(),
         ...syncOpts,
       })
