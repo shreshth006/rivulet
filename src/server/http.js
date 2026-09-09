@@ -21,7 +21,7 @@
 
 import { createServer } from 'node:http';
 import { readFile, stat } from 'node:fs/promises';
-import { join, extname, normalize, sep } from 'node:path';
+import { join, extname, normalize, resolve, sep } from 'node:path';
 import { SyncServer } from '#server/engine';
 import { unpackMessage, packMessage, Encoding } from '#protocol/framing';
 import { MessageType } from '#protocol/messages';
@@ -69,13 +69,20 @@ export class HttpSyncServer {
    * @param {object} opts
    * @param {SyncServer} opts.engine
    * @param {string} [opts.staticDir] serve a directory at `/`
+   * @param {Record<string, string>} [opts.mounts] URL prefix -> directory,
+   *   for serving the engine's own modules alongside a demo page
    * @param {string} [opts.token] bearer token required on every request
    * @param {string[]} [opts.origins] allowed CORS origins; '*' by default
    * @param {number} [opts.heartbeatMs] SSE keep-alive interval
    */
-  constructor({ engine, staticDir, token, origins = ['*'], heartbeatMs = 25_000 }) {
+  constructor({ engine, staticDir, mounts, token, origins = ['*'], heartbeatMs = 25_000 }) {
     this.#engine = engine;
-    this.#opts = { staticDir, token, origins, heartbeatMs };
+    // Longest prefix first, so '/src' is matched before '/'.
+    const all = { ...(staticDir ? { '/': staticDir } : {}), ...mounts };
+    this.#opts = {
+      token, origins, heartbeatMs,
+      mounts: Object.entries(all).sort((a, b) => b[0].length - a[0].length),
+    };
   }
 
   get engine() { return this.#engine; }
@@ -132,7 +139,7 @@ export class HttpSyncServer {
       case 'GET /v1/health': return this.#json(res, 200, { ok: true, node: this.#engine.node });
       case 'GET /v1/stats': return this.#json(res, 200, await this.#engine.stats());
       default:
-        if (req.method === 'GET' && this.#opts.staticDir) return this.#static(url, res);
+        if (req.method === 'GET' && this.#opts.mounts.length) return this.#static(url, res);
         return this.#json(res, 404, { error: 'not found' });
     }
   }
@@ -217,28 +224,40 @@ export class HttpSyncServer {
   /* ---------------------------------------------------------------- static */
 
   async #static(url, res) {
-    const root = this.#opts.staticDir;
-    const requested = url.pathname === '/' ? '/index.html' : url.pathname;
-    // Resolve and confirm the result is still inside the root, so `..` in a
-    // path cannot read arbitrary files off the server.
-    const target = join(root, normalize(requested).replace(/^(\.\.(\/|\\|$))+/, ''));
-    if (!target.startsWith(root + sep) && target !== join(root, 'index.html')) {
+    const mount = this.#opts.mounts.find(([prefix]) =>
+      url.pathname === prefix || url.pathname.startsWith(prefix === '/' ? '/' : `${prefix}/`));
+    if (!mount) return this.#json(res, 404, { error: 'not found' });
+
+    const [prefix, root] = mount;
+    const relative = url.pathname.slice(prefix === '/' ? 0 : prefix.length) || '/';
+    const requested = relative === '/' ? '/index.html' : relative;
+
+    // Resolve, then confirm the result is still inside the root. Checking the
+    // resolved path rather than the requested one is what makes `..`, encoded
+    // separators and symlink-ish tricks all fail the same way.
+    const target = resolve(root, `.${normalize(requested)}`);
+    const rootResolved = resolve(root);
+    if (target !== rootResolved && !target.startsWith(rootResolved + sep)) {
       return this.#json(res, 403, { error: 'forbidden' });
     }
 
-    try {
-      const info = await stat(target);
-      if (!info.isFile()) throw new Error('not a file');
-      const body = await readFile(target);
-      res.writeHead(200, {
-        'content-type': MIME[extname(target)] ?? 'application/octet-stream',
-        'content-length': body.length,
-        'cache-control': 'no-cache',
-      });
-      res.end(body);
-    } catch {
-      this.#json(res, 404, { error: 'not found' });
+    // Node resolves bare specifiers without an extension; browsers do not.
+    // Trying `.js` lets the same source files load unmodified in both, so the
+    // demo runs the engine itself rather than a bundled copy of it.
+    for (const candidate of extname(target) ? [target] : [target, `${target}.js`]) {
+      try {
+        const info = await stat(candidate);
+        if (!info.isFile()) continue;
+        const body = await readFile(candidate);
+        res.writeHead(200, {
+          'content-type': MIME[extname(candidate)] ?? 'application/octet-stream',
+          'content-length': body.length,
+          'cache-control': 'no-cache',
+        });
+        return res.end(body);
+      } catch { /* try the next candidate */ }
     }
+    this.#json(res, 404, { error: 'not found' });
   }
 
   /* ----------------------------------------------------------------- utils */
@@ -261,7 +280,7 @@ export class HttpSyncServer {
  */
 export async function startServer({
   port = 8787, host = '127.0.0.1', dataDir = './data', schema,
-  token, staticDir, origins, memory = false,
+  token, staticDir, mounts, origins, memory = false,
 } = {}) {
   const { SqliteAdapter } = await import('#storage/sqlite');
   const { MemoryAdapter } = await import('#storage/adapter');
@@ -277,5 +296,5 @@ export async function startServer({
       : new SqliteAdapter({ path: join(dataDir, `${room.replace(/[^\w.-]/g, '_')}.sqlite`) })),
   });
 
-  return new HttpSyncServer({ engine, token, staticDir, origins }).listen(port, host);
+  return new HttpSyncServer({ engine, token, staticDir, mounts, origins }).listen(port, host);
 }
