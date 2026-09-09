@@ -32,6 +32,8 @@ export class Link {
     this.failNext = 0;
     /** Allow N more requests, then fail -- drops a link mid-transfer. */
     this.allowNext = null;
+    /** How simulated failures present themselves; see TransportError#kind. */
+    this.failKind = 'unreachable';
   }
 
   partition() { this.partitioned = true; return this; }
@@ -42,12 +44,15 @@ export class Link {
     this.requests++;
     if (this.allowNext !== null) {
       if (this.allowNext > 0) this.allowNext--;
-      else { this.failures++; throw new TransportError('link dropped mid-transfer'); }
+      else {
+        this.failures++;
+        throw new TransportError('link dropped mid-transfer', { kind: this.failKind });
+      }
     }
     if (this.partitioned || this.failNext > 0) {
       if (this.failNext > 0) this.failNext--;
       this.failures++;
-      throw new TransportError('simulated network failure');
+      throw new TransportError('simulated network failure', { kind: this.failKind });
     }
     if (this.latencyMs > 0) await new Promise((r) => setTimeout(r, this.latencyMs));
     const { reply } = await exchange();
