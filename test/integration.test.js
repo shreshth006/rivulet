@@ -308,3 +308,32 @@ test('subscribe re-renders on local and remote changes', async (t) => {
   b.mutate((tx) => tx.create('notes', { title: 'after unsubscribe' }));
   assert.equal(renders.at(-1), 2);
 });
+
+test('a transport factory receives the replica id restored from storage', async (t) => {
+  const { LoopbackTransport } = await import('#client/transport');
+  const { makeCluster } = await import('./helpers/cluster.js');
+  const c = await makeCluster({ clients: 1 });
+  t.after(() => c.close());
+
+  const storage = new MemoryAdapter({ name: 'factory' });
+  const seen = [];
+  const open = () => RivuletClient.open({
+    schema: notebookSchema, room: 'test-room', storage,
+    transport: (node) => {
+      seen.push(node);
+      return new LoopbackTransport(c.server, { node, room: 'test-room' });
+    },
+    sync: { pollMs: 1e9, debounceMs: 1e9 },
+  });
+
+  const first = await open();
+  const id = first.mutate((tx) => tx.create('notes', { title: 'from factory' }));
+  await first.syncUntilIdle();
+  await first.close();
+
+  const second = await open();
+  t.after(() => second.close());
+  assert.equal(seen.length, 2);
+  assert.equal(seen[0], seen[1], 'the factory must see the same id across restarts');
+  assert.equal(second.get('notes', id).title, 'from factory');
+});
