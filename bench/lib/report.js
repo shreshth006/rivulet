@@ -9,6 +9,26 @@
 
 /** @typedef {{ columns: Array<{key: string, label: string, align?: 'left'|'right', format?: (v:any)=>string}>, rows: object[] }} Table */
 
+/**
+ * Median of a list of numbers.
+ *
+ * Scenarios that involve packet loss are genuinely stochastic: a single run can
+ * be dominated by whether one timeout happened to land inside an outage
+ * window. Reporting one seed would be reporting noise, so the variance-prone
+ * scenarios run several and report the median, with the spread alongside it so
+ * the reader can see how much to trust the centre.
+ */
+export function median(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = sorted.length >> 1;
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+/** Median plus the observed range, for a set of repeated runs. */
+export function summarise(values) {
+  return { median: median(values), min: Math.min(...values), max: Math.max(...values) };
+}
+
 export const fmt = {
   bytes: (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(2)} MB`
     : n >= 1e3 ? `${(n / 1e3).toFixed(1)} kB` : `${Math.round(n)} B`),
