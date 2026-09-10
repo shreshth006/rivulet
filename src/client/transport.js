@@ -21,7 +21,6 @@
 import { Emitter } from '#core/util';
 import { TransportError, AuthError, ProtocolError } from '#core/errors';
 import { packMessage, unpackMessage, Encoding, ByteMeter } from '#protocol/framing';
-import { SyncServer } from '#server/engine';
 
 /**
  * @typedef {object} Transport
@@ -32,7 +31,7 @@ import { SyncServer } from '#server/engine';
  */
 
 /**
- * Talks to a {@link SyncServer} object directly, with no serialisation.
+ * Talks to a `SyncServer` object directly, with no serialisation.
  *
  * Used by the integration tests. Being able to run the complete client/server
  * protocol in one process, deterministically and in microseconds, is what makes
@@ -49,7 +48,7 @@ export class LoopbackTransport extends Emitter {
   #link;
 
   /**
-   * @param {SyncServer} server
+   * @param {import('#server/engine').SyncServer} server
    * @param {object} opts
    * @param {string} opts.node client replica id
    * @param {string} [opts.room]
