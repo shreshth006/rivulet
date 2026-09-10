@@ -34,6 +34,16 @@ export class Link {
     this.allowNext = null;
     /** How simulated failures present themselves; see TransportError#kind. */
     this.failKind = 'unreachable';
+    /**
+     * How long a simulated failure takes. A real timeout takes time by
+     * definition, and the batch controller uses that duration to tell a
+     * request that was too big from a link that simply died.
+     */
+    this.failDelayMs = 0;
+  }
+
+  async #stall() {
+    if (this.failDelayMs > 0) await new Promise((r) => setTimeout(r, this.failDelayMs));
   }
 
   partition() { this.partitioned = true; return this; }
@@ -46,12 +56,14 @@ export class Link {
       if (this.allowNext > 0) this.allowNext--;
       else {
         this.failures++;
+        await this.#stall();
         throw new TransportError('link dropped mid-transfer', { kind: this.failKind });
       }
     }
     if (this.partitioned || this.failNext > 0) {
       if (this.failNext > 0) this.failNext--;
       this.failures++;
+      await this.#stall();
       throw new TransportError('simulated network failure', { kind: this.failKind });
     }
     if (this.latencyMs > 0) await new Promise((r) => setTimeout(r, this.latencyMs));
