@@ -102,7 +102,10 @@ test('a timeout does shrink the batch, because the size is implicated', async (t
   t.after(() => c.close());
   const [a] = c.clients;
 
+  // A timeout that takes no time is not evidence about size; a real one runs
+  // long before it gives up, which is the signal the controller uses.
   a.link.failKind = 'timeout';
+  a.link.failDelayMs = 40;
   a.link.partition();
   for (let i = 0; i < 4; i++) await a.sync();
   assert.ok(a.engine.batchSize < 256, `expected backoff, still at ${a.engine.batchSize}`);
