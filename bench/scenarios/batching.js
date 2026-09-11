@@ -11,11 +11,15 @@
  * adaptive controller is not expected to beat the best constant for a given
  * network -- the interesting claim is weaker and more useful: it should come
  * close to the best on every network, without being told which one it is on.
+ *
+ * Every configuration is run over several seeds and reported as a median. On a
+ * lossy profile a single run can be decided by whether one timeout happened to
+ * land inside an outage window, and reporting that would be reporting noise.
  */
 
 import { buildCluster, converged } from '#bench/netsim/harness';
 import { notebookSchema } from '../../test/helpers/fixtures.js';
-import { Report, fmt } from '#bench/lib/report';
+import { Report, fmt, median } from '#bench/lib/report';
 
 async function runOnce({ profile, batching, seed, documents = 120 }) {
   const cluster = await buildCluster({
@@ -48,7 +52,7 @@ async function runOnce({ profile, batching, seed, documents = 120 }) {
   }
 }
 
-export async function run({ seed = 11 } = {}) {
+export async function run({ seed = 11, repeats = 5 } = {}) {
   const report = new Report('batching',
     'Adaptive batch sizing against fixed sizes, on networks that punish opposite mistakes.');
 
@@ -63,15 +67,20 @@ export async function run({ seed = 11 } = {}) {
   for (const profileName of ['satellite', 'mobileEdge', 'hostelWifi']) {
     const rows = [];
     for (const [label, batching] of strategies) {
-      const r = await runOnce({ profile: profileName, batching, seed });
+      const runs = [];
+      for (let i = 0; i < repeats; i++) {
+        runs.push(await runOnce({ profile: profileName, batching, seed: seed + i * 1013 }));
+      }
+      const times = runs.map((r) => r.elapsedMs);
       rows.push({
         strategy: label,
-        elapsedMs: r.elapsedMs,
-        requests: r.requests,
-        retries: r.retries,
-        bytes: r.bytes,
-        finalBatch: label === 'adaptive' ? r.finalBatch : null,
-        ok: r.ok,
+        elapsedMs: median(times),
+        spreadMs: Math.max(...times) - Math.min(...times),
+        requests: Math.round(median(runs.map((r) => r.requests))),
+        retries: Math.round(median(runs.map((r) => r.retries))),
+        bytes: Math.round(median(runs.map((r) => r.bytes))),
+        finalBatch: label === 'adaptive' ? Math.round(median(runs.map((r) => r.finalBatch))) : null,
+        ok: runs.every((r) => r.ok),
       });
     }
 
@@ -84,7 +93,8 @@ export async function run({ seed = 11 } = {}) {
     report.add(`Bulk transfer on ${profileName}`, {
       columns: [
         { key: 'strategy', label: 'Strategy', align: 'left' },
-        { key: 'elapsedMs', label: 'Time', format: fmt.ms },
+        { key: 'elapsedMs', label: 'Time (median)', format: fmt.ms },
+        { key: 'spreadMs', label: 'Spread', format: fmt.ms },
         { key: 'vsBest', label: 'vs best fixed', format: fmt.ratio },
         { key: 'requests', label: 'Requests', format: fmt.int },
         { key: 'retries', label: 'Failed rounds', format: fmt.int },
@@ -93,7 +103,8 @@ export async function run({ seed = 11 } = {}) {
         { key: 'ok', label: 'Converged', format: (v) => (v ? 'yes' : 'NO') },
       ],
       rows,
-    }, `Adaptive: ${fmt.ratio(adaptive.elapsedMs / best)} of the best fixed size `
+    }, `Median of ${repeats} seeds. `
+     + `Adaptive: ${fmt.ratio(adaptive.elapsedMs / best)} of the best fixed size `
      + `(which had to be chosen knowing the network), against ${fmt.ratio(worst / best)} `
      + 'for the worst fixed choice. The claim being tested is not that adapting '
      + 'beats a well-chosen constant -- it does not -- but that it stays close '
