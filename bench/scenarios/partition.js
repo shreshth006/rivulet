@@ -16,7 +16,7 @@
 
 import { buildCluster, converged } from '#bench/netsim/harness';
 import { notebookSchema } from '../../test/helpers/fixtures.js';
-import { Report, fmt } from '#bench/lib/report';
+import { Report, fmt, median } from '#bench/lib/report';
 import { makeRng, randInt, pick } from '#core/util';
 
 /**
@@ -126,7 +126,25 @@ async function runOnce({ profile, clients, documents, editsEach, seed }) {
   }
 }
 
-export async function run({ seed = 3 } = {}) {
+/** Run a configuration over several seeds and reduce to medians. */
+async function repeat(config, seed, times) {
+  const runs = [];
+  for (let i = 0; i < times; i++) runs.push(await runOnce({ ...config, seed: seed + i * 1013 }));
+  return {
+    catchUpMs: median(runs.map((r) => r.catchUpMs)),
+    bytes: Math.round(median(runs.map((r) => r.bytes))),
+    requests: Math.round(median(runs.map((r) => r.requests))),
+    operations: Math.round(median(runs.map((r) => r.operations))),
+    edits: runs[0].edits,
+    verified: runs[0].verified,
+    // Correctness is not averaged: every run must converge and lose nothing.
+    lost: runs.reduce((n, r) => n + r.lost, 0),
+    converged: runs.every((r) => r.converged),
+    countersOk: runs.every((r) => r.countersOk),
+  };
+}
+
+export async function run({ seed = 3, repeats = 5 } = {}) {
   const report = new Report('partition',
     'Cost of reconciling after every replica has worked offline.');
 
@@ -134,9 +152,8 @@ export async function run({ seed = 3 } = {}) {
 
   const byVolume = [];
   for (const editsEach of [5, 25, 100, 400]) {
-    const r = await runOnce({
-      profile: 'hostelWifi', clients: 4, documents: 10, editsEach, seed,
-    });
+    const r = await repeat(
+      { profile: 'hostelWifi', clients: 4, documents: 10, editsEach }, seed, repeats);
     byVolume.push({
       editsEach,
       totalEdits: r.edits,
@@ -165,7 +182,10 @@ export async function run({ seed = 3 } = {}) {
       { key: 'ok', label: 'Correct', format: (v) => (v ? 'yes' : 'NO') },
     ],
     rows: byVolume,
-  }, 'On the hostel-wifi profile. Catch-up is simulated time from reconnection '
+  }, `Median of ${repeats} seeds, except the correctness columns, which are `
+   + 'totals across every run -- a single lost edit anywhere is a failure, not '
+   + 'something to average away. On the hostel-wifi profile. Catch-up is '
+   + 'simulated time from reconnection '
    + 'to convergence, and excludes the outage itself. "Checked" counts the '
    + 'edits with a defined survival requirement -- set additions and text '
    + 'insertions -- each verified individually in the converged state; '
@@ -176,7 +196,7 @@ export async function run({ seed = 3 } = {}) {
 
   const byNetwork = [];
   for (const profile of ['broadband', 'mobile3g', 'hostelWifi', 'mobileEdge']) {
-    const r = await runOnce({ profile, clients: 4, documents: 10, editsEach: 100, seed });
+    const r = await repeat({ profile, clients: 4, documents: 10, editsEach: 100 }, seed, repeats);
     byNetwork.push({
       profile,
       catchUpMs: r.catchUpMs,
@@ -199,8 +219,10 @@ export async function run({ seed = 3 } = {}) {
       { key: 'ok', label: 'Correct', format: (v) => (v ? 'yes' : 'NO') },
     ],
     rows: byNetwork,
-  }, 'Four replicas, 100 edits each, made entirely offline. The edge profile '
-   + 'includes recurring outages during the catch-up itself.');
+  }, `Median of ${repeats} seeds. Four replicas, 100 edits each, made entirely `
+   + 'offline. The hostel-wifi and edge profiles have recurring outages during '
+   + 'the catch-up itself, so their timings are dominated by how much of an '
+   + 'outage window the reconnection happens to land in.');
 
   return report;
 }
