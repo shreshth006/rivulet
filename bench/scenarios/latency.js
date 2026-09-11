@@ -22,7 +22,7 @@ import { buildCluster, converged } from '#bench/netsim/harness';
 import { notebookSchema } from '../../test/helpers/fixtures.js';
 import { naiveCodec } from '#bench/lib/baseline';
 import { PROFILE_ORDER, PROFILES, formatBandwidth } from '#bench/netsim/profiles';
-import { Report, fmt } from '#bench/lib/report';
+import { Report, fmt, median } from '#bench/lib/report';
 
 /**
  * One run: replica 0 types a note, everyone converges.
@@ -59,29 +59,39 @@ async function runOnce({ profile, codec, compress, seed, chars = 300, clients = 
   }
 }
 
-export async function run({ seed = 1, chars = 300 } = {}) {
+export async function run({ seed = 1, chars = 300, repeats = 5 } = {}) {
   const report = new Report('latency',
     'Time for an edit on one device to become visible on another.');
 
   const rows = [];
   for (const name of PROFILE_ORDER) {
     const profile = PROFILES[name];
-    const mine = await runOnce({ profile, seed, chars });
-    // The naive stack: plain JSON operations, no transport compression.
-    const base = await runOnce({ profile, seed, chars, codec: naiveCodec, compress: false });
+    const mine = [];
+    const base = [];
+    for (let i = 0; i < repeats; i++) {
+      const s = seed + i * 1013;
+      mine.push(await runOnce({ profile, seed: s, chars }));
+      // The naive stack: plain JSON operations, no transport compression.
+      base.push(await runOnce({ profile, seed: s, chars, codec: naiveCodec, compress: false }));
+    }
+
+    const mineMs = median(mine.map((r) => r.elapsedMs));
+    const baseMs = median(base.map((r) => r.elapsedMs));
+    const mineBytes = median(mine.map((r) => r.bytes));
+    const baseBytes = median(base.map((r) => r.bytes));
 
     rows.push({
       profile: profile.name,
       rtt: profile.rttMs,
       bandwidth: formatBandwidth(profile.bandwidthBps),
-      baseMs: base.elapsedMs,
-      mineMs: mine.elapsedMs,
-      speedup: base.elapsedMs / Math.max(1, mine.elapsedMs),
-      baseBytes: base.bytes,
-      mineBytes: mine.bytes,
-      byteSaving: 1 - mine.bytes / base.bytes,
-      requests: mine.requests,
-      ok: mine.converged && base.converged,
+      baseMs,
+      mineMs,
+      speedup: baseMs / Math.max(1, mineMs),
+      baseBytes,
+      mineBytes,
+      byteSaving: 1 - mineBytes / baseBytes,
+      requests: Math.round(median(mine.map((r) => r.requests))),
+      ok: mine.every((r) => r.converged) && base.every((r) => r.converged),
     });
   }
 
@@ -99,8 +109,9 @@ export async function run({ seed = 1, chars = 300 } = {}) {
       { key: 'ok', label: 'Converged', format: (v) => (v ? 'yes' : 'NO') },
     ],
     rows,
-  }, 'Baseline is the identical engine with plain-JSON operations and no '
-   + 'compression, over the identical simulated link. Simulated time.');
+  }, `Median of ${repeats} seeds. Baseline is the identical engine with `
+   + 'plain-JSON operations and no compression, over the identical simulated '
+   + 'link. Times are simulated, not wall-clock.');
 
   return report;
 }
