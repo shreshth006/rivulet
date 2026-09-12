@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 187 tests, no dependencies
+npm test                                            # 222 tests, no dependencies
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
 
@@ -209,6 +209,7 @@ Stated plainly, because they bound where this is the right tool:
 ## Project layout
 
 ```
+src/index.js    the public API surface
 src/core/       clocks, version vectors, CRDT types, document model
 src/protocol/   operation codec, messages, framing, compression
 src/storage/    adapter contract + memory, SQLite and IndexedDB backends
@@ -216,9 +217,13 @@ src/client/     sync engine, adaptive batching, transports
 src/server/     sync server core and its HTTP/SSE transport
 bench/          network simulator and the evaluation scenarios
 apps/           demo notebook and the server CLI
+examples/       two runnable examples, start with two-replicas.js
 docs/           design documents and decision records
 paper/          the write-up
 ```
+
+Start with [`examples/two-replicas.js`](examples/two-replicas.js) — the whole
+model in about eighty lines, runnable with no setup.
 
 ## Testing
 
