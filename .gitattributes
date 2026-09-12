@@ -1,0 +1,9 @@
+* text=auto eol=lf
+
+# Benchmark output is generated. Keep it out of diffs so a re-run does not
+# bury a real change under thousands of lines of numbers.
+bench/results/*.csv  -diff linguist-generated
+bench/results/*.json -diff linguist-generated
+bench/results/*.md   -diff linguist-generated
+
+*.sqlite binary
