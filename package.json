@@ -25,9 +25,8 @@
     "demo": "node --experimental-sqlite apps/cli/serve.js --demo",
     "bench": "node --experimental-sqlite bench/run.js",
     "bench:all": "node --experimental-sqlite bench/run.js --all --out bench/results",
-    "paper:figures": "node --experimental-sqlite scripts/make-figures.js",
-    "lint": "node scripts/syntax-check.js",
-    "test:integration": "node --test --experimental-sqlite \"test/**/*.test.js\""
+    "test:integration": "node --test --experimental-sqlite \"test/**/*.test.js\"",
+    "check": "node --experimental-sqlite scripts/check.js"
   },
   "keywords": [
     "crdt",
