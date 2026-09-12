@@ -1,0 +1,50 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The engine relies on node:sqlite, which landed in 22.5. Testing the
+        # lowest supported version as well as current catches accidental use of
+        # newer built-ins, which is easy to do when there are no dependencies
+        # to pin the floor for us.
+        node: ['22.x', '24.x']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      # There is nothing to install. That is the point.
+      - name: Check that the dependency tree is empty
+        run: |
+          if [ -f package-lock.json ] || [ -d node_modules ]; then
+            echo "this project is meant to have no dependencies"; exit 1
+          fi
+
+      - name: Static check
+        run: node scripts/check.js
+
+      - name: Tests
+        run: node --test --experimental-sqlite "src/**/*.test.js" "test/**/*.test.js"
+
+  benchmarks:
+    # Benchmarks are deterministic but slow, so they run on main rather than on
+    # every pull request. They are a correctness check too: each scenario
+    # asserts that every replica ends byte-identical.
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+      - name: Bandwidth and overhead
+        run: node --experimental-sqlite bench/run.js bandwidth overhead
