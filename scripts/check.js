@@ -124,6 +124,7 @@ async function main() {
     || f.includes(`${join('apps', '')}`)
     || f.includes(`${join('bench', '')}`)
     || f.includes(`${join('scripts', '')}`)
+    || f.includes(`${join('examples', '')}`)
     || f.endsWith('.test.js')
     || f.includes(`${join('test', 'helpers')}`));
 
