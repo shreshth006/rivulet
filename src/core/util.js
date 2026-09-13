@@ -152,6 +152,23 @@ export function bisect(arr, item, cmp) {
 export class Emitter {
   #listeners = new Map();
 
+  /**
+   * What to do when a listener throws.
+   *
+   * One subscriber's bug must not stop the others from being notified -- a
+   * render callback that throws should not prevent the sync engine's own
+   * bookkeeping listener from running. But the error must not vanish either,
+   * or the bug is invisible.
+   *
+   * The default rethrows out of band, which surfaces it as an unhandled error
+   * rather than a silent no-op. Applications that would rather log and carry
+   * on can replace it; on a phone, taking down the process because a list item
+   * failed to render is the worse outcome.
+   *
+   * @type {(error: unknown, context: {event: string}) => void}
+   */
+  onListenerError = (error) => { queueMicrotask(() => { throw error; }); };
+
   /** @param {string} event @param {(payload:any)=>void} fn @returns {() => void} unsubscribe */
   on(event, fn) {
     if (!this.#listeners.has(event)) this.#listeners.set(event, new Set());
@@ -173,7 +190,7 @@ export class Emitter {
     if (!set) return;
     // Copy: handlers routinely unsubscribe themselves mid-dispatch.
     for (const fn of [...set]) {
-      try { fn(payload); } catch (err) { queueMicrotask(() => { throw err; }); }
+      try { fn(payload); } catch (err) { this.onListenerError(err, { event }); }
     }
   }
 
