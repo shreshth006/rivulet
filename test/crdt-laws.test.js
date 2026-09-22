@@ -70,6 +70,18 @@ test('LWW keeps the highest timestamp regardless of arrival order', () => {
   assert.equal(a.crdt.value, winner);
 });
 
+test('LWWRegister hasValue and isInitialized reflect content state', () => {
+  const reg = new LWWRegister();
+  assert.equal(reg.hasValue, false);
+  assert.equal(reg.isInitialized, false);
+
+  const [a] = replicas(1, () => reg);
+  a.emit(() => LWWRegister.op('hello'));
+  assert.equal(reg.hasValue, true);
+  assert.equal(reg.isInitialized, true);
+  assert.equal(reg.value, 'hello');
+});
+
 test('MVRegister surfaces concurrent writes and collapses once one is seen', () => {
   const [a, b] = replicas(2, () => new MVRegister());
   const wa = a.emit((c) => c.op('from-a'));
