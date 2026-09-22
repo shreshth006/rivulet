@@ -161,5 +161,25 @@ test('RivuletClient snapshot, loadSnapshot and gc methods', async () => {
   await clientB.close();
 });
 
+test('RivuletClient waitForIdle resolves and reports pending status', async () => {
+  const client = await RivuletClient.open({
+    schema: notebookSchema,
+    room: 'idle-room',
+    storage: new MemoryAdapter({ name: 'idle-mem' }),
+  });
+
+  const emptyIdle = await client.waitForIdle({ timeoutMs: 50 });
+  assert.equal(emptyIdle, true);
+
+  client.mutate((tx) => tx.create('notes', { title: 'Local note' }));
+  await client.flush();
+  // With no server to push to, pendingCount is 1, so waitForIdle finishes
+  const hasPending = await client.waitForIdle({ timeoutMs: 50, pollIntervalMs: 10 });
+  assert.equal(hasPending, false);
+
+  await client.close();
+});
+
+
 
 
