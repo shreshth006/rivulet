@@ -129,4 +129,23 @@ test('ORSet handles object members by value', () => {
   const rm = b.emit((c) => c.op({ id: 1, tag: 'urgent' }));
   a.receive(rm);
   assert.equal(a.crdt.size, 0);
+  assert.equal(a.crdt.isEmpty, true);
+});
+
+test('ORSet clearOps generates removes for all observed elements', () => {
+  const [a] = replicas(1, () => new ORSet());
+  assert.equal(a.crdt.isEmpty, true);
+
+  a.receive(a.emit(() => ORSet.op('apple')));
+  a.receive(a.emit(() => ORSet.op('banana')));
+  assert.equal(a.crdt.size, 2);
+  assert.equal(a.crdt.isEmpty, false);
+
+  const clearOps = a.crdt.clearOps();
+  assert.equal(clearOps.length, 2);
+  for (const op of clearOps) {
+    a.receive(a.emit(() => op));
+  }
+  assert.equal(a.crdt.size, 0);
+  assert.equal(a.crdt.isEmpty, true);
 });
