@@ -364,3 +364,22 @@ test('query supports field projection with select option', () => {
   assert.equal(listProjected.length, 1);
   assert.deepEqual(listProjected[0], { id, title: 'Projected Note' });
 });
+
+test('query list supports string and object sorting specs', () => {
+  const db = makeDb('a');
+  db.mutate((tx) => tx.create('notes', { title: 'Zebra', reads: 10 }));
+  db.mutate((tx) => tx.create('notes', { title: 'Apple', reads: 30 }));
+  db.mutate((tx) => tx.create('notes', { title: 'Mango', reads: 20 }));
+
+  // Ascending string sort
+  const asc = db.list('notes', { sort: 'title' });
+  assert.deepEqual(asc.map((n) => n.title), ['Apple', 'Mango', 'Zebra']);
+
+  // Descending string sort with '-'
+  const desc = db.list('notes', { sort: '-title' });
+  assert.deepEqual(desc.map((n) => n.title), ['Zebra', 'Mango', 'Apple']);
+
+  // Object sort
+  const byReadsDesc = db.list('notes', { sort: { reads: -1 } });
+  assert.deepEqual(byReadsDesc.map((n) => n.reads), [30, 20, 10]);
+});

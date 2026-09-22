@@ -57,6 +57,37 @@ function matchField(actual, expected) {
   return actual === expected;
 }
 
+function makeComparator(sort) {
+  if (typeof sort === 'function') return sort;
+  if (typeof sort === 'string') {
+    const desc = sort.startsWith('-');
+    const field = desc ? sort.slice(1) : sort;
+    return (a, b) => {
+      const va = a[field], vb = b[field];
+      if (va === vb) return 0;
+      if (va === undefined || va === null) return 1;
+      if (vb === undefined || vb === null) return -1;
+      return desc ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
+    };
+  }
+  if (sort && typeof sort === 'object') {
+    const entries = Object.entries(sort);
+    return (a, b) => {
+      for (const [field, dir] of entries) {
+        const desc = dir === -1 || dir === 'desc';
+        const va = a[field], vb = b[field];
+        if (va !== vb) {
+          if (va === undefined || va === null) return 1;
+          if (vb === undefined || vb === null) return -1;
+          return desc ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
+        }
+      }
+      return 0;
+    };
+  }
+  return null;
+}
+
 export class Database extends Emitter {
   #schema;
   #clock;
@@ -186,7 +217,8 @@ export class Database extends Emitter {
         }
       }
     }
-    if (sort) out.sort(sort);
+    const cmp = makeComparator(sort);
+    if (cmp) out.sort(cmp);
     if (offset) out = out.slice(offset);
     if (limit !== undefined) out = out.slice(0, limit);
     return out;
