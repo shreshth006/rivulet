@@ -101,6 +101,19 @@ test('PNCounter adds concurrent increments instead of overwriting', () => {
   assert.equal(a.crdt.contributions.length, 3);
 });
 
+test('PNCounter resetOp cancels current value to zero', () => {
+  const [a] = replicas(1, () => new PNCounter());
+  assert.equal(a.crdt.isZero, true);
+
+  a.emit(() => PNCounter.op(42));
+  assert.equal(a.crdt.value, 42);
+  assert.equal(a.crdt.isZero, false);
+
+  a.emit((c) => c.resetOp());
+  assert.equal(a.crdt.value, 0);
+  assert.equal(a.crdt.isZero, true);
+});
+
 test('ORSet is add-wins and supports re-adding a removed element', () => {
   const [a, b] = replicas(2, () => new ORSet());
   const add = a.emit(() => ORSet.op('x'));
