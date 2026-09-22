@@ -230,6 +230,12 @@ export class OpLog extends Emitter {
 
   /* -------------------------------------------------------- compaction */
 
+  /** Whether the underlying storage adapter supports snapshotting and compaction. */
+  get canCompact() {
+    return typeof this.#adapter.saveSnapshot === 'function' &&
+           typeof this.#adapter.truncateBelow === 'function';
+  }
+
   /**
    * Replace the covered prefix of the log with a snapshot.
    *

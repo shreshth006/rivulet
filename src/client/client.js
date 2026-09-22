@@ -245,11 +245,17 @@ export class RivuletClient extends Emitter {
     };
   }
 
+  /** Whether the underlying storage adapter supports compaction. */
+  get canCompact() {
+    return this.#log.canCompact;
+  }
+
   /** Reclaim freed storage space if the storage adapter supports it. */
   async vacuum() {
     await this.flush();
     return this.#log.vacuum();
   }
+
 
   async close() {
     this.#closed = true;

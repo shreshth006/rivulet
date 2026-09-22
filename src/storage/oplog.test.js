@@ -250,3 +250,13 @@ test('vacuum delegates to adapter if supported and returns status', async () => 
   await sqliteLog.close();
 });
 
+test('canCompact reflects adapter capabilities accurately', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  assert.equal(memLog.canCompact, false);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  assert.equal(sqliteLog.canCompact, true);
+  await sqliteLog.close();
+});
+
+
