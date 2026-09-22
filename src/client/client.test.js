@@ -41,6 +41,10 @@ test('RivuletClient works locally with query, exists and find', async (t) => {
   const foundByTag = client.find('notes', { tags: 'personal' });
   assert.equal(foundByTag?.id, id2);
 
+  // findOne alias
+  const foundOne = client.findOne('notes', { tags: 'personal' });
+  assert.equal(foundOne?.id, id2);
+
   // find with predicate function
   const foundByPredicate = client.find('notes', (doc) => doc.body.includes('Second'));
   assert.equal(foundByPredicate?.id, id2);

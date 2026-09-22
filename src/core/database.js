@@ -204,6 +204,10 @@ export class Database extends Emitter {
     return results[0] ?? null;
   }
 
+  findOne(collection, where, opts = {}) {
+    return this.find(collection, where, opts);
+  }
+
   /** Documents holding unresolved concurrent values, for a conflict-review UI. */
   conflicts(collection) {
     const names = collection ? [collection] : this.#schema.names;
