@@ -185,6 +185,8 @@ export class OpLog extends Emitter {
 
   async getMeta(key) { this.#assertOpen(); return this.#adapter.getMeta(key); }
   async setMeta(key, value) { this.#assertOpen(); return this.#adapter.setMeta(key, value); }
+  async deleteMeta(key) { this.#assertOpen(); return this.#adapter.setMeta(key, undefined); }
+  async hasMeta(key) { this.#assertOpen(); return (await this.#adapter.getMeta(key)) !== undefined; }
 
   /**
    * This replica's durable identity, minted on first run.

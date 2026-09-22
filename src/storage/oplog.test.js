@@ -278,5 +278,19 @@ test('exportOps and importOps allow full round-trip of log history', async () =>
   assert.equal(dupe.duplicates, 8);
 });
 
+test('deleteMeta and hasMeta manage custom metadata entries', async () => {
+  const log = await openLog();
+  assert.equal(await log.hasMeta('custom_key'), false);
+
+  await log.setMeta('custom_key', { foo: 'bar' });
+  assert.equal(await log.hasMeta('custom_key'), true);
+  assert.deepEqual(await log.getMeta('custom_key'), { foo: 'bar' });
+
+  await log.deleteMeta('custom_key');
+  assert.equal(await log.hasMeta('custom_key'), false);
+  assert.equal(await log.getMeta('custom_key'), undefined);
+});
+
+
 
 
