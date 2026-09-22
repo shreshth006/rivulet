@@ -253,3 +253,31 @@ test('static serving refuses to escape its mount root', async (t) => {
     assert.ok(!body.includes('"name": "rivulet"'), `${attempt} leaked a file outside the root`);
   }
 });
+
+test('SyncServer room inspection, roomStats and closeRoom', async () => {
+  const engine = new SyncServer({
+    storage: async (room) => new MemoryAdapter({ name: room }),
+  });
+
+  assert.equal(engine.roomCount, 0);
+  assert.equal(engine.hasRoom('test-room'), false);
+
+  await engine.room('test-room');
+  assert.equal(engine.roomCount, 1);
+  assert.equal(engine.hasRoom('test-room'), true);
+  assert.deepEqual(engine.roomNames, ['test-room']);
+
+  const stats = await engine.roomStats('test-room');
+  assert.equal(stats.name, 'test-room');
+  assert.equal(stats.operations, 0);
+  assert.equal(stats.connections, 0);
+
+  const closed = await engine.closeRoom('test-room');
+  assert.equal(closed, true);
+  assert.equal(engine.roomCount, 0);
+  assert.equal(engine.hasRoom('test-room'), false);
+
+  assert.equal(await engine.closeRoom('nonexistent'), false);
+  await engine.close();
+});
+

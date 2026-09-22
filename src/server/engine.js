@@ -107,6 +107,35 @@ export class SyncServer extends Emitter {
   get node() { return (this.#node ??= newNodeId()); }
   get limits() { return { ...this.#limits }; }
   get roomNames() { return [...this.#rooms.keys()]; }
+  get roomCount() { return this.#rooms.size; }
+
+  hasRoom(name) { return this.#rooms.has(name); }
+
+  /** Return operational statistics for a specific room. */
+  async roomStats(name) {
+    const r = await this.room(name);
+    return {
+      name: r.name,
+      connections: r.connections,
+      lastActivity: r.lastActivity,
+      operations: await r.log.count(),
+      replicas: r.log.frontier().size,
+      bytes: await r.log.sizeBytes(),
+      canCompact: r.log.canCompact,
+    };
+  }
+
+  /** Close and evict a single room. */
+  async closeRoom(name) {
+    const entry = this.#rooms.get(name);
+    if (!entry) return false;
+    const room = entry instanceof Promise ? await entry : entry;
+    room.listeners.clear();
+    await room.log.close();
+    this.#rooms.delete(name);
+    this.emit('room-close', { room: name });
+    return true;
+  }
 
   /** Open a room's log on first use. Concurrent callers share one open. */
   async room(name) {
