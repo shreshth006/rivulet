@@ -30,7 +30,7 @@ import {
   validateMessage, readVector, assertSchemaMatch,
 } from '#protocol/messages';
 import { newNodeId } from '#core/ids';
-import { AuthError, ProtocolError, ValidationError, RivuletError } from '#core/errors';
+import { AuthError, ProtocolError, ValidationError, RivuletError, LimitError } from '#core/errors';
 
 /** A room is one synchronisation domain: one shared operation log. */
 class Room extends Emitter {
@@ -80,6 +80,7 @@ export class SyncServer extends Emitter {
   #authorize;
   #schema;
   #codec;
+  #maxRooms;
 
   /**
    * @param {object} opts
@@ -90,8 +91,9 @@ export class SyncServer extends Emitter {
    * @param {string} [opts.node] fixed server id (tests); otherwise minted
    * @param {{encode: Function, decode: Function}} [opts.codec] operation batch
    *   encoding; must match what clients use
+   * @param {number} [opts.maxRooms] maximum number of concurrently open rooms
    */
-  constructor({ storage, schema, authorize, limits, node, codec } = {}) {
+  constructor({ storage, schema, authorize, limits, node, codec, maxRooms = Infinity } = {}) {
     super();
     if (typeof storage !== 'function') {
       throw new ValidationError('SyncServer needs a storage factory');
@@ -100,12 +102,13 @@ export class SyncServer extends Emitter {
     this.#schema = schema;
     this.#authorize = authorize ?? (() => true);
     this.#limits = { ...DEFAULT_LIMITS, ...limits };
+    this.#maxRooms = limits?.maxRooms ?? maxRooms;
     this.#node = node ?? null;
     this.#codec = codec ?? { encode: encodeOps, decode: decodeOps };
   }
 
   get node() { return (this.#node ??= newNodeId()); }
-  get limits() { return { ...this.#limits }; }
+  get limits() { return { ...this.#limits, maxRooms: this.#maxRooms }; }
   get roomNames() { return [...this.#rooms.keys()]; }
   get roomCount() { return this.#rooms.size; }
 
@@ -141,6 +144,9 @@ export class SyncServer extends Emitter {
   async room(name) {
     let entry = this.#rooms.get(name);
     if (entry) return entry instanceof Promise ? entry : entry;
+    if (this.#rooms.size >= this.#maxRooms) {
+      throw new LimitError('maximum room limit reached', { maxRooms: this.#maxRooms });
+    }
 
     const opening = (async () => {
       const log = await new OpLog(await this.#openRoom(name)).open();
@@ -287,6 +293,7 @@ export class SyncServer extends Emitter {
   static statusFor(err) {
     switch (err?.code) {
       case 'E_AUTH': return 403;
+      case 'E_LIMIT': return 429;
       case 'E_VALIDATION': return 400;
       case 'E_PROTOCOL': return 400;
       case 'E_STORAGE': return 503;

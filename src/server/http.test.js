@@ -312,3 +312,30 @@ test('SyncServer room inspection, roomStats and closeRoom', async () => {
   await engine.close();
 });
 
+test('SyncServer maxRooms ceiling rejects opening excess rooms', async () => {
+  const { LimitError } = await import('#core/errors');
+  const engine = new SyncServer({
+    storage: async (room) => new MemoryAdapter({ name: room }),
+    maxRooms: 2,
+  });
+
+  await engine.room('room-1');
+  await engine.room('room-2');
+  assert.equal(engine.roomCount, 2);
+
+  // Accessing existing room is fine
+  await engine.room('room-1');
+
+  // Exceeding room limit throws LimitError
+  await assert.rejects(() => engine.room('room-3'), LimitError);
+
+  // Closing one room frees a slot
+  await engine.closeRoom('room-1');
+  assert.equal(engine.roomCount, 1);
+  await engine.room('room-3');
+  assert.equal(engine.roomCount, 2);
+
+  await engine.close();
+});
+
+
