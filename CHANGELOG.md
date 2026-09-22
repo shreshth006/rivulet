@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.2.0
+
+Comprehensive query, reliability, diagnostic, and developer tooling enhancements.
+
+### Query Engine & Schema
+
+- Rich query operator support in `Database.list` and `client.list`: `$gt`, `$gte`,
+  `$lt`, `$lte`, `$ne`, `$in`, `$nin`, `$exists`, and `$regex`.
+- Field projection (`select: ['field1', 'field2']`) for efficient bandwidth and memory reads.
+- Multi-format sorting: string (`'title'`, `'-reads'`), object maps (`{ reads: -1 }`), and custom comparators.
+- Single document query helpers: `exists(collection, id)`, `find(collection, where)`, `findOne(collection, where)`.
+- Runtime document schema validation (`schema.validate(doc)`).
+
+### Storage & Compaction
+
+- Checkpointing and compaction capability inspection (`log.canCompact`, `client.canCompact`).
+- Safe checkpointing without log truncation (`log.saveSnapshot`).
+- Storage vacuuming (`log.vacuum`, `client.vacuum`) to reclaim disk pages in SQLite.
+- Full operation import and export (`log.exportOps`, `log.importOps`, `log.exportJson`, `log.importJson`).
+- Metadata lifecycle management with `log.hasMeta` and `log.deleteMeta`.
+
+### Sync Server & Protocol
+
+- Server resource ceiling with `maxRooms` limit protection against denial-of-service.
+- Room operational inspection: `server.roomStats(name)`, `server.roomCount`, `server.hasRoom`, `server.closeRoom`.
+- Operational HTTP diagnostic endpoints: `GET /v1/info` and `GET /v1/room`.
+- Wire protocol message type guards (`isSyncMessage`, `isAckMessage`, etc.) and error-safe parser (`safeParseMessage`).
+- Bandwidth savings telemetry and compression metrics in `ByteMeter`.
+
+### Client & Developer Tooling
+
+- Status lifecycle subscription (`client.onStatus`) and synchronization awaiters (`client.waitForStatus`, `client.waitForIdle`).
+- Portable snapshot accessors on client (`client.snapshot`, `client.loadSnapshot`, `client.gc`).
+- Interactive terminal REPL (`examples/repl.js`, `npm run repl`).
+- Property-based fuzz test suite (`test/fuzz.test.js`) verifying chaotic multi-replica partitions and payload corruption.
+- Query performance benchmark scenario (`bench/scenarios/query.js`).
+- Dependency-free data structures (`LruCache`, `cloneDeep`, `asyncMap`).
+
 ## 0.1.0
 
 First release. The engine is complete and the evaluation reproduces.
