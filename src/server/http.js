@@ -24,7 +24,8 @@ import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize, resolve, sep } from 'node:path';
 import { SyncServer } from '#server/engine';
 import { unpackMessage, packMessage, Encoding } from '#protocol/framing';
-import { MessageType } from '#protocol/messages';
+import { MessageType, PROTOCOL_VERSION } from '#protocol/messages';
+import { CODEC_VERSION } from '#protocol/codec';
 import { AuthError, ProtocolError } from '#core/errors';
 
 const MIME = {
@@ -137,6 +138,21 @@ export class HttpSyncServer {
       case 'POST /v1/sync': return this.#sync(req, res);
       case 'GET /v1/stream': return this.#stream(req, res, url);
       case 'GET /v1/health': return this.#json(res, 200, { ok: true, node: this.#engine.node });
+      case 'GET /v1/info':
+        return this.#json(res, 200, {
+          ok: true,
+          node: this.#engine.node,
+          protocolVersion: PROTOCOL_VERSION,
+          codecVersion: CODEC_VERSION,
+          limits: this.#engine.limits,
+          rooms: this.#engine.roomCount,
+        });
+      case 'GET /v1/room': {
+        const room = url.searchParams.get('name');
+        if (!room) return this.#json(res, 400, { error: 'room name is required' });
+        if (!this.#engine.hasRoom(room)) return this.#json(res, 404, { error: 'room not found' });
+        return this.#json(res, 200, await this.#engine.roomStats(room));
+      }
       case 'GET /v1/stats': return this.#json(res, 200, await this.#engine.stats());
       default:
         if (req.method === 'GET' && this.#opts.mounts.length) return this.#static(url, res);

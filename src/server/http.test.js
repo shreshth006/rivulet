@@ -152,6 +152,37 @@ test('health and stats report the server state', async (t) => {
   assert.ok(stats.rooms[0].operations >= 1);
 });
 
+test('info and room endpoints report server metadata and room stats', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+
+  const info = await (await fetch(`${server.url}/v1/info`)).json();
+  assert.equal(info.ok, true);
+  assert.equal(info.protocolVersion, 1);
+  assert.equal(info.codecVersion, 2);
+  assert.equal(typeof info.node, 'string');
+  assert.equal(typeof info.limits, 'object');
+
+  // Room not yet opened
+  const missing = await fetch(`${server.url}/v1/room?name=http-room`);
+  assert.equal(missing.status, 404);
+
+  // Missing room param
+  const badParam = await fetch(`${server.url}/v1/room`);
+  assert.equal(badParam.status, 400);
+
+  // Connect client to open room
+  const a = await connect(server, 'info-a');
+  t.after(() => a.close());
+  await a.sync();
+
+  const roomRes = await fetch(`${server.url}/v1/room?name=http-room`);
+  assert.equal(roomRes.status, 200);
+  const roomData = await roomRes.json();
+  assert.equal(roomData.name, 'http-room');
+});
+
+
 test('unknown routes 404 rather than hanging', async (t) => {
   const server = await serve();
   t.after(() => server.close());
