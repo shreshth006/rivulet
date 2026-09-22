@@ -258,9 +258,21 @@ export class OpLog extends Emitter {
     return removed;
   }
 
+  /** Save a snapshot into storage without log truncation. */
+  async saveSnapshot(state, upTo, opts) {
+    this.#assertOpen();
+    if (typeof this.#adapter.saveSnapshot !== 'function') {
+      throw new StorageError('this adapter does not support snapshots', { adapter: this.#adapter.name });
+    }
+    const frontier = upTo instanceof VersionVector ? upTo.toJSON() : upTo;
+    await this.#adapter.saveSnapshot(state, frontier, opts);
+    this.emit('snapshot', { frontier });
+  }
+
   async latestSnapshot() {
     return this.#adapter.latestSnapshot?.() ?? null;
   }
+
 
   /** Reclaim freed storage space if the underlying adapter supports it (e.g. SQLite). */
   async vacuum() {
