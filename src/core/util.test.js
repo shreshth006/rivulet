@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toHex, randomHex, makeRng, randInt, pick, shuffled,
-  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter,
+  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep,
 } from '#core/util';
 import { ValidationError } from '#core/errors';
 
@@ -142,4 +142,29 @@ test('a throwing listener does not break the emit loop, and is reported', () => 
   assert.equal(errors.length, 1, 'and the failure must not vanish');
   assert.match(errors[0][0], /blew up/);
   assert.equal(errors[0][1], 'x');
+});
+
+test('cloneDeep creates independent deep copies of complex structures', () => {
+  const original = {
+    num: 42,
+    str: 'hello',
+    arr: [1, { nested: 'val' }, [3, 4]],
+    set: new Set(['a', 'b']),
+    map: new Map([['k1', { v: 1 }]]),
+    date: new Date(123456789),
+    regex: /abc/gi,
+  };
+
+  const copy = cloneDeep(original);
+  assert.deepEqual(copy, original);
+
+  // Mutating copy does not alter original
+  copy.arr[1].nested = 'changed';
+  assert.equal(original.arr[1].nested, 'val');
+
+  copy.set.add('c');
+  assert.equal(original.set.has('c'), false);
+
+  copy.map.get('k1').v = 99;
+  assert.equal(original.map.get('k1').v, 1);
 });

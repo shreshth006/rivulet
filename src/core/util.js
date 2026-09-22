@@ -196,3 +196,33 @@ export class Emitter {
 
   removeAllListeners() { this.#listeners.clear(); }
 }
+
+/** Fast structured clone for plain objects, arrays, Sets, Maps, and primitives. */
+export function cloneDeep(val) {
+  if (val === null || typeof val !== 'object') return val;
+  if (val instanceof Date) return new Date(val.getTime());
+  if (val instanceof RegExp) return new RegExp(val.source, val.flags);
+  if (val instanceof Set) {
+    const copy = new Set();
+    for (const item of val) copy.add(cloneDeep(item));
+    return copy;
+  }
+  if (val instanceof Map) {
+    const copy = new Map();
+    for (const [k, v] of val) copy.set(cloneDeep(k), cloneDeep(v));
+    return copy;
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => cloneDeep(item));
+  }
+  if (val instanceof Uint8Array) {
+    const copy = new Uint8Array(val.length);
+    copy.set(val);
+    return copy;
+  }
+  const copy = {};
+  for (const [k, v] of Object.entries(val)) {
+    copy[k] = cloneDeep(v);
+  }
+  return copy;
+}
