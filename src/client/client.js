@@ -180,6 +180,7 @@ export class RivuletClient extends Emitter {
   list(collection, opts) { return this.#db.list(collection, opts); }
   count(collection, opts) { return this.#db.count(collection, opts); }
   conflicts(collection) { return this.#db.conflicts(collection); }
+  hasConflict(collection, id) { return this.#db.hasConflict(collection, id); }
 
   /**
    * Re-run `render` whenever `collection` changes, and once immediately.

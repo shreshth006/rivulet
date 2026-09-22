@@ -133,10 +133,13 @@ test('multi-value fields surface a conflict for review', () => {
   assert.equal(conflicts.length, 1);
   assert.deepEqual(conflicts[0].fields[0].values.sort(), [900, 950]);
   assert.deepEqual(a.conflicts(), b.conflicts());
+  assert.equal(a.hasConflict('notes', id), true);
+  assert.equal(b.hasConflict('notes', id), true);
 
   // Resolving is an ordinary write, made after seeing both.
   deliver(a.mutate((tx) => tx.set('notes', id, 'estimate', 925)).ops, b);
   assert.equal(b.conflicts('notes').length, 0);
+  assert.equal(b.hasConflict('notes', id), false);
   assert.equal(b.get('notes', id).estimate, 925);
 });
 

@@ -253,6 +253,10 @@ export class Database extends Emitter {
     return out;
   }
 
+  hasConflict(collection, id) {
+    return this.document(collection, id)?.hasConflict ?? false;
+  }
+
   count(collection, opts) { return this.list(collection, opts).length; }
 
   // --------------------------------------------------------------- writing

@@ -93,6 +93,12 @@ export class Document {
     return out;
   }
 
+  /** Whether any field on this document currently holds unresolved concurrent writes. */
+  get hasConflict() {
+    for (const crdt of this.fields.values()) if (crdt.hasConflict) return true;
+    return false;
+  }
+
   /** Plain object view for the application. */
   value({ includeDeleted = false } = {}) {
     if (this.deleted && !includeDeleted) return null;
