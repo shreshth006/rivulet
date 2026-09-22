@@ -196,6 +196,23 @@ export function validateMessage(msg, expected) {
   return msg;
 }
 
+/**
+ * Safely parse and validate a JSON string as a protocol message.
+ * @param {string} jsonString
+ * @param {string} [expectedType]
+ * @returns {{ ok: boolean, value: object|null, error: Error|null }}
+ */
+export function safeParseMessage(jsonString, expectedType) {
+  try {
+    const raw = typeof jsonString === 'string' ? JSON.parse(jsonString) : jsonString;
+    const msg = validateMessage(raw, expectedType);
+    return { ok: true, value: msg, error: null };
+  } catch (err) {
+    return { ok: false, value: null, error: err };
+  }
+}
+
+
 /** Read the `have` field of a message back into a {@link VersionVector}. */
 export function readVector(msg) {
   try {

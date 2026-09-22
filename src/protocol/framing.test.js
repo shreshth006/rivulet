@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import { packMessage, unpackMessage, Encoding, negotiateEncoding, ByteMeter } from '#protocol/framing';
 import {
   sync, ack, hello, welcome, event, errorMessage,
-  validateMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION,
+  validateMessage, safeParseMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION,
   isHelloMessage, isWelcomeMessage, isSyncMessage, isAckMessage, isEventMessage, isErrorMessage,
 } from '#protocol/messages';
+
 import { encodeOps } from '#protocol/codec';
 import { ProtocolError, ValidationError } from '#core/errors';
 import { VersionVector } from '#core/version-vector';
@@ -145,4 +146,23 @@ test('message type guards identify protocol messages accurately', () => {
   assert.equal(isErrorMessage(undefined), false);
   assert.equal(isErrorMessage('hello'), false);
 });
+
+test('safeParseMessage validates messages safely without throwing', () => {
+  const json = JSON.stringify(sync({ node: NODE, room: 'r1', have: {} }));
+  const parsed = safeParseMessage(json, MessageType.SYNC);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.value.t, MessageType.SYNC);
+  assert.equal(parsed.error, null);
+
+  const badJson = safeParseMessage('{malformed json', MessageType.SYNC);
+  assert.equal(badJson.ok, false);
+  assert.equal(badJson.value, null);
+  assert.ok(badJson.error);
+
+  const typeMismatch = safeParseMessage(json, MessageType.ACK);
+  assert.equal(typeMismatch.ok, false);
+  assert.equal(typeMismatch.value, null);
+  assert.ok(typeMismatch.error instanceof ProtocolError);
+});
+
 
