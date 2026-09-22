@@ -301,6 +301,27 @@ export class RivuletClient extends Emitter {
     return this.#log.outboxSize(this.#db.node);
   }
 
+  /**
+   * Wait until all pending local writes are flushed and acknowledged by the server.
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs] maximum wait time
+   * @param {number} [opts.pollIntervalMs] interval between checks
+   * @returns {Promise<boolean>}
+   */
+  async waitForIdle({ timeoutMs = 5000, pollIntervalMs = 20 } = {}) {
+    await this.flush();
+    if ((await this.pendingCount()) === 0) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.#engine) await this.sync();
+      await this.flush();
+      if ((await this.pendingCount()) === 0) return true;
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+    return (await this.pendingCount()) === 0;
+  }
+
+
   async stats() {
     return {
       node: this.node,
