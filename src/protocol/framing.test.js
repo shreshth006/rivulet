@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { packMessage, unpackMessage, Encoding, negotiateEncoding, ByteMeter } from '#protocol/framing';
-import { sync, ack, hello, welcome, validateMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION } from '#protocol/messages';
+import {
+  sync, ack, hello, welcome, event, errorMessage,
+  validateMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION,
+  isHelloMessage, isWelcomeMessage, isSyncMessage, isAckMessage, isEventMessage, isErrorMessage,
+} from '#protocol/messages';
 import { encodeOps } from '#protocol/codec';
 import { ProtocolError, ValidationError } from '#core/errors';
 import { VersionVector } from '#core/version-vector';
@@ -106,3 +110,33 @@ test('a schema mismatch is reported clearly', () => {
   assertSchemaMatch('fp', undefined);
   assert.throws(() => assertSchemaMatch('fp-a', 'fp-b'), ValidationError);
 });
+
+test('message type guards identify protocol messages accurately', () => {
+  const h = hello({ node: NODE, room: 'r1' });
+  const w = welcome({ node: NODE, room: 'r1' });
+  const s = sync({ node: NODE, room: 'r1', have: {} });
+  const a = ack({ node: NODE });
+  const ev = event({ node: NODE });
+  const err = errorMessage('BAD', 'something broke');
+
+  assert.equal(isHelloMessage(h), true);
+  assert.equal(isHelloMessage(s), false);
+
+  assert.equal(isWelcomeMessage(w), true);
+  assert.equal(isWelcomeMessage(h), false);
+
+  assert.equal(isSyncMessage(s), true);
+  assert.equal(isSyncMessage(a), false);
+
+  assert.equal(isAckMessage(a), true);
+  assert.equal(isAckMessage(s), false);
+
+  assert.equal(isEventMessage(ev), true);
+  assert.equal(isEventMessage(w), false);
+
+  assert.equal(isErrorMessage(err), true);
+  assert.equal(isErrorMessage(null), false);
+  assert.equal(isErrorMessage(undefined), false);
+  assert.equal(isErrorMessage('hello'), false);
+});
+

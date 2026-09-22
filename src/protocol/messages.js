@@ -215,3 +215,13 @@ export function assertSchemaMatch(local, remote) {
     throw new ValidationError('schema mismatch between client and server', { local, remote });
   }
 }
+
+/* ------------------------------------------------------------- type guards */
+
+export const isHelloMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.HELLO;
+export const isWelcomeMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.WELCOME;
+export const isSyncMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.SYNC;
+export const isAckMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.ACK;
+export const isEventMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.EVENT;
+export const isErrorMessage = (msg) => typeof msg === 'object' && msg !== null && msg.t === MessageType.ERROR;
+
