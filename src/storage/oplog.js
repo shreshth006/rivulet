@@ -300,6 +300,35 @@ export class OpLog extends Emitter {
     return this.append(ops);
   }
 
+  /**
+   * Export operations serialized as JSON.
+   * @param {object} [opts]
+   * @param {number|string} [opts.indent]
+   * @returns {Promise<string>}
+   */
+  async exportJson({ indent, ...opts } = {}) {
+    const ops = await this.exportOps(opts);
+    return JSON.stringify(ops, null, indent);
+  }
+
+  /**
+   * Import operations from a JSON serialized string.
+   * @param {string} jsonString
+   * @returns {Promise<{added: number, duplicates: number, fresh: object[]}>}
+   */
+  async importJson(jsonString) {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (err) {
+      throw new StorageError('invalid JSON for operation import', { cause: String(err) });
+    }
+    if (!Array.isArray(parsed)) {
+      throw new StorageError('operation import JSON must be an array', { received: typeof parsed });
+    }
+    return this.importOps(parsed);
+  }
+
   get stats() {
     let held = 0, rangeCount = 0;
     for (const ranges of this.#ranges.values()) { held += ranges.size; rangeCount += ranges.rangeCount; }

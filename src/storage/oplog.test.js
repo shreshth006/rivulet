@@ -291,6 +291,26 @@ test('deleteMeta and hasMeta manage custom metadata entries', async () => {
   assert.equal(await log.getMeta('custom_key'), undefined);
 });
 
+test('exportJson and importJson serialize and restore operations', async () => {
+  const logA = await openLog();
+  const { ops } = sample('a', 5);
+  await logA.append(ops);
+
+  const json = await logA.exportJson({ indent: 2 });
+  assert.equal(typeof json, 'string');
+  assert.ok(json.includes(ops[0].node));
+
+  const logB = await openLog();
+  const res = await logB.importJson(json);
+  assert.equal(res.added, 5);
+  assert.equal(await logB.count(), 5);
+
+  // Rejects invalid JSON and non-arrays
+  await assert.rejects(() => logB.importJson('{not valid json'), /invalid JSON/);
+  await assert.rejects(() => logB.importJson('{"not": "array"}'), /must be an array/);
+});
+
+
 
 
 
