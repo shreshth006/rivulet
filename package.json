@@ -27,7 +27,8 @@
     "bench:all": "node --experimental-sqlite bench/run.js --all --out bench/results",
     "test:integration": "node --test --experimental-sqlite \"test/**/*.test.js\"",
     "check": "node --experimental-sqlite scripts/check.js",
-    "example": "node --experimental-sqlite examples/two-replicas.js"
+    "example": "node --experimental-sqlite examples/two-replicas.js",
+    "repl": "node --experimental-sqlite examples/repl.js"
   },
   "keywords": [
     "crdt",

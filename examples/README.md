@@ -36,3 +36,11 @@ node --experimental-sqlite apps/cli/serve.js --demo
 
 Then open <http://127.0.0.1:8787> in two windows. Click **Go offline** in one,
 edit the same note in both, and come back online.
+
+## `repl.js`
+
+An interactive terminal REPL for creating, querying, tagging and syncing documents in a room.
+
+```bash
+npm run repl
+```
