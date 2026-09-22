@@ -92,6 +92,8 @@ export class RGA {
   get text() { return this.elements.join(''); }
 
   get length() { return this.elements.length; }
+  get size() { return this.length; }
+  get isEmpty() { return this.length === 0; }
 
   /** Total nodes including tombstones; the benchmarks track the ratio. */
   get physicalLength() { return this.#nodes.size - 1; }
