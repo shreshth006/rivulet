@@ -39,12 +39,21 @@ test('local typing and deleting reads back as plain text', () => {
   assert.equal(a.crdt.length, 5);
   assert.equal(a.crdt.size, 5);
   assert.equal(a.crdt.isEmpty, false);
+  assert.equal(a.crdt.at(0), 'h');
+  assert.equal(a.crdt.at(-1), 'o');
+  assert.equal(a.crdt.includes('e'), true);
+  assert.equal(a.crdt.includes('z'), false);
+  assert.equal(a.crdt.indexOf('l'), 2);
+  assert.deepEqual(a.crdt.toArray(), ['h', 'e', 'l', 'l', 'o']);
   assert.equal(a.crdt.physicalLength, 11, 'deleted characters remain as tombstones');
 
   const empty = new RGA();
   assert.equal(empty.size, 0);
   assert.equal(empty.isEmpty, true);
+  assert.equal(empty.includes('a'), false);
+  assert.deepEqual(empty.toArray(), []);
 });
+
 
 test('concurrent typing at the same spot interleaves deterministically', () => {
   const [a, b] = replicas(2, () => new RGA());
