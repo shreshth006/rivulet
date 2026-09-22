@@ -170,6 +170,8 @@ test('RivuletClient waitForIdle resolves and reports pending status', async () =
 
   const emptyIdle = await client.waitForIdle({ timeoutMs: 50 });
   assert.equal(emptyIdle, true);
+  assert.equal(client.schema, notebookSchema);
+  assert.equal(client.schemaFingerprint, notebookSchema.fingerprint);
 
   client.mutate((tx) => tx.create('notes', { title: 'Local note' }));
   await client.flush();

@@ -176,6 +176,8 @@ export class RivuletClient extends Emitter {
   get log() { return this.#log; }
   get engine() { return this.#engine; }
   get node() { return this.#db.node; }
+  get schema() { return this.#db.schema; }
+  get schemaFingerprint() { return this.#db.schemaFingerprint; }
   get status() { return this.#engine?.status ?? Status.OFFLINE; }
   get online() { return this.#engine?.online ?? false; }
 
