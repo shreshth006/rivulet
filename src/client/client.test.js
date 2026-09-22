@@ -107,6 +107,10 @@ test('RivuletClient flush, pendingCount, stats and closing', async () => {
   assert.equal(typeof stats.node, 'string');
   assert.equal(stats.database.documents, 1);
 
+  const vacuumed = await client.vacuum();
+  assert.equal(vacuumed, false); // Memory adapter has no vacuum
+
   await client.close();
   assert.throws(() => client.mutate((tx) => tx.create('notes', { title: 'fails' })), ValidationError);
 });
+

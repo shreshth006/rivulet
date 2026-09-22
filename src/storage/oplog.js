@@ -254,6 +254,16 @@ export class OpLog extends Emitter {
     return this.#adapter.latestSnapshot?.() ?? null;
   }
 
+  /** Reclaim freed storage space if the underlying adapter supports it (e.g. SQLite). */
+  async vacuum() {
+    this.#assertOpen();
+    if (typeof this.#adapter.vacuum === 'function') {
+      await this.#adapter.vacuum();
+      return true;
+    }
+    return false;
+  }
+
   async clear() {
     this.#assertOpen();
     await this.#adapter.clear();

@@ -245,6 +245,12 @@ export class RivuletClient extends Emitter {
     };
   }
 
+  /** Reclaim freed storage space if the storage adapter supports it. */
+  async vacuum() {
+    await this.flush();
+    return this.#log.vacuum();
+  }
+
   async close() {
     this.#closed = true;
     await this.flush();

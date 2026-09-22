@@ -238,3 +238,15 @@ test('a closed log refuses work instead of failing obscurely', async () => {
   assert.throws(() => log.frontier(), /not open/);
   await assert.rejects(() => log.count(), /not open/);
 });
+
+test('vacuum delegates to adapter if supported and returns status', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  const memResult = await memLog.vacuum();
+  assert.equal(memResult, false);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  const sqliteResult = await sqliteLog.vacuum();
+  assert.equal(sqliteResult, true);
+  await sqliteLog.close();
+});
+
