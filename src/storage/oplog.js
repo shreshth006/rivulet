@@ -276,6 +276,28 @@ export class OpLog extends Emitter {
     this.#ranges.clear();
   }
 
+  /**
+   * Export recorded operations in the log.
+   * @param {object} [opts]
+   * @param {string} [opts.collection]
+   * @param {string} [opts.doc]
+   * @returns {Promise<object[]>}
+   */
+  async exportOps(opts = {}) {
+    this.#assertOpen();
+    return this.#adapter.readOps(opts);
+  }
+
+  /**
+   * Import operations into the log.
+   * @param {object[]} ops
+   * @returns {Promise<{added: number, duplicates: number, fresh: object[]}>}
+   */
+  async importOps(ops) {
+    this.#assertOpen();
+    return this.append(ops);
+  }
+
   get stats() {
     let held = 0, rangeCount = 0;
     for (const ranges of this.#ranges.values()) { held += ranges.size; rangeCount += ranges.rangeCount; }

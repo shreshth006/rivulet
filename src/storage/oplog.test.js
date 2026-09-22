@@ -259,4 +259,24 @@ test('canCompact reflects adapter capabilities accurately', async () => {
   await sqliteLog.close();
 });
 
+test('exportOps and importOps allow full round-trip of log history', async () => {
+  const source = await openLog();
+  const { ops } = sample('a', 8);
+  await source.append(ops);
+
+  const exported = await source.exportOps();
+  assert.equal(exported.length, 8);
+  assert.equal(exported[0].node, ops[0].node);
+
+  const target = await openLog();
+  const result = await target.importOps(exported);
+  assert.equal(result.added, 8);
+  assert.equal(await target.count(), 8);
+
+  const dupe = await target.importOps(exported);
+  assert.equal(dupe.added, 0);
+  assert.equal(dupe.duplicates, 8);
+});
+
+
 
