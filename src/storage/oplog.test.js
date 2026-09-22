@@ -310,6 +310,27 @@ test('exportJson and importJson serialize and restore operations', async () => {
   await assert.rejects(() => logB.importJson('{"not": "array"}'), /must be an array/);
 });
 
+test('saveSnapshot saves checkpoints without truncating log', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  await assert.rejects(() => memLog.saveSnapshot({ state: 's' }, {}), /does not support snapshots/);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  const { ops } = sample('a', 6);
+  await sqliteLog.append(ops);
+
+  let snapshotEvent = null;
+  sqliteLog.on('snapshot', (e) => { snapshotEvent = e; });
+
+  await sqliteLog.saveSnapshot({ custom: 'snap' }, { [ops[0].node]: 6 });
+  assert.ok(snapshotEvent);
+  assert.equal(await sqliteLog.count(), 6);
+
+  const snap = await sqliteLog.latestSnapshot();
+  assert.deepEqual(snap.state, { custom: 'snap' });
+  await sqliteLog.close();
+});
+
+
 
 
 
