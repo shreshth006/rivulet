@@ -264,3 +264,28 @@ export class LruCache {
   delete(key) { return this.#map.delete(key); }
   clear() { this.#map.clear(); }
 }
+
+/**
+ * Asynchronously map an array of items with bounded concurrency.
+ * @template T, R
+ * @param {T[]} items
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @param {{ concurrency?: number }} [opts]
+ * @returns {Promise<R[]>}
+ */
+export async function asyncMap(items, fn, { concurrency = 4 } = {}) {
+  const results = new Array(items.length);
+  const limit = Math.max(1, concurrency);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(items.length, limit) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}

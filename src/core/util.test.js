@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toHex, randomHex, makeRng, randInt, pick, shuffled,
-  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep, LruCache,
+  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep, LruCache, asyncMap,
 } from '#core/util';
 import { ValidationError } from '#core/errors';
 
@@ -192,4 +192,21 @@ test('LruCache enforces capacity and maintains recency order', () => {
   assert.equal(cache.size, 0);
 
   assert.throws(() => new LruCache(0), ValidationError);
+});
+
+test('asyncMap executes concurrent tasks with bounded concurrency and preserves order', async () => {
+  const items = [10, 20, 30, 40, 50];
+  let active = 0;
+  let maxActive = 0;
+
+  const result = await asyncMap(items, async (val) => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active--;
+    return val * 2;
+  }, { concurrency: 2 });
+
+  assert.deepEqual(result, [20, 40, 60, 80, 100]);
+  assert.ok(maxActive <= 2, `expected concurrency <= 2, got ${maxActive}`);
 });
