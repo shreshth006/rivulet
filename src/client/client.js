@@ -215,6 +215,32 @@ export class RivuletClient extends Emitter {
     return this.#db.mutate(fn).result;
   }
 
+  /** Produce a portable point-in-time snapshot of the current state. */
+  snapshot() {
+    return this.#db.snapshot();
+  }
+
+  /**
+   * Load and merge a snapshot into the local database state.
+   * @param {object} snap
+   * @returns {number} merged document count
+   */
+  loadSnapshot(snap) {
+    if (this.#closed) throw new ValidationError('client is closed');
+    return this.#db.loadSnapshot(snap);
+  }
+
+  /**
+   * Reclaim CRDT bookkeeping below a causally stable timestamp.
+   * @param {string} stableTs
+   * @returns {number} count of reclaimed entries
+   */
+  gc(stableTs) {
+    if (this.#closed) throw new ValidationError('client is closed');
+    return this.#db.gc(stableTs);
+  }
+
+
   /* ----------------------------------------------------------------- sync */
 
   /** Force a reconciliation now. Resolves when the round completes. */

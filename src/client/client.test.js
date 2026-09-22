@@ -132,4 +132,34 @@ test('RivuletClient onStatus and waitForStatus report status lifecycle', async (
   await client.close();
 });
 
+test('RivuletClient snapshot, loadSnapshot and gc methods', async () => {
+  const clientA = await RivuletClient.open({
+    schema: notebookSchema,
+    room: 'snap-room',
+    storage: new MemoryAdapter({ name: 'snap-mem-a' }),
+  });
+
+  clientA.mutate((tx) => tx.create('notes', { title: 'Snapshot note' }));
+  const snap = clientA.snapshot();
+  assert.equal(snap.v, 1);
+  assert.equal(typeof snap.collections.notes, 'object');
+
+  const clientB = await RivuletClient.open({
+    schema: notebookSchema,
+    room: 'snap-room-b',
+    storage: new MemoryAdapter({ name: 'snap-mem-b' }),
+  });
+
+  const merged = clientB.loadSnapshot(snap);
+  assert.equal(merged, 1);
+  assert.equal(clientB.list('notes')[0].title, 'Snapshot note');
+
+  const reclaimed = clientB.gc('9999999999999999-0000-ffffffffffffffff');
+  assert.equal(typeof reclaimed, 'number');
+
+  await clientA.close();
+  await clientB.close();
+});
+
+
 
