@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeOps, decodeOps, measure, firstSeqs, CODEC_VERSION } from '#protocol/codec';
+import { encodeOps, decodeOps, measure, firstSeqs, batchStats, CODEC_VERSION } from '#protocol/codec';
 import { ProtocolError } from '#core/errors';
 import { ZERO_TIMESTAMP, encodeTimestamp } from '#core/hlc';
 import { makeDb, deliver } from '../../test/helpers/fixtures.js';
@@ -170,3 +170,19 @@ test('the codec version is part of the encoding', () => {
   assert.equal(encodeOps([]).v, CODEC_VERSION);
   assert.equal(encodeOps(mixedBatch(16).ops).v, CODEC_VERSION);
 });
+
+test('batchStats inspects packed batch metadata without decoding', () => {
+  const { ops } = mixedBatch(17);
+  const encoded = encodeOps(ops);
+  const stats = batchStats(encoded);
+
+  assert.equal(stats.count, ops.length);
+  assert.equal(stats.version, CODEC_VERSION);
+  assert.ok(stats.nodes.length > 0);
+  assert.ok(stats.collections.includes('notes'));
+  assert.equal(stats.options.intern, true);
+
+  assert.throws(() => batchStats(null), ProtocolError);
+  assert.throws(() => batchStats('invalid'), ProtocolError);
+});
+
