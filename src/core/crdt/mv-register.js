@@ -19,6 +19,7 @@
 
 import { registerType } from '#core/crdt/contract';
 import { compareTimestamps } from '#core/hlc';
+import { deepEqual } from '#core/util';
 
 export class MVRegister {
   static type = 'mv';
@@ -50,6 +51,16 @@ export class MVRegister {
 
   /** True when replicas disagree and the application should show a choice. */
   get hasConflict() { return this.#entries.size > 1; }
+  get size() { return this.#entries.size; }
+  get isEmpty() { return this.#entries.size === 0; }
+
+  /** Check if a specific value is present among current siblings. */
+  hasValue(val) {
+    for (const v of this.#entries.values()) {
+      if (deepEqual(v, val)) return true;
+    }
+    return false;
+  }
 
   get siblings() {
     return [...this.#entries.entries()]

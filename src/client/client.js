@@ -150,6 +150,11 @@ export class RivuletClient extends Emitter {
     client._attachWrites(writes);
     client.schemaState = schemaState;
 
+    if (engine) {
+      engine.on('status', (e) => client.emit('status', e));
+      engine.on('sync', (e) => client.emit('sync', e));
+    }
+
     // Persist every local write, and keep the clock mark ahead of it, so a
     // crash between writing and syncing cannot rewind us on the next start.
     db.on('local-ops', ({ ops }) => { writes.push(ops); });
@@ -157,6 +162,7 @@ export class RivuletClient extends Emitter {
     if (engine && autoStart) await engine.start();
     return client;
   }
+
 
   /** @internal wiring, so the queue can report errors through this emitter */
   _attachWrites(writes) { this.#writes = writes; }
@@ -170,13 +176,19 @@ export class RivuletClient extends Emitter {
   get log() { return this.#log; }
   get engine() { return this.#engine; }
   get node() { return this.#db.node; }
+  get schema() { return this.#db.schema; }
+  get schemaFingerprint() { return this.#db.schemaFingerprint; }
   get status() { return this.#engine?.status ?? Status.OFFLINE; }
   get online() { return this.#engine?.online ?? false; }
 
   get(collection, id, opts) { return this.#db.get(collection, id, opts); }
+  exists(collection, id) { return this.#db.exists(collection, id); }
+  find(collection, where, opts) { return this.#db.find(collection, where, opts); }
+  findOne(collection, where, opts) { return this.#db.findOne(collection, where, opts); }
   list(collection, opts) { return this.#db.list(collection, opts); }
   count(collection, opts) { return this.#db.count(collection, opts); }
   conflicts(collection) { return this.#db.conflicts(collection); }
+  hasConflict(collection, id) { return this.#db.hasConflict(collection, id); }
 
   /**
    * Re-run `render` whenever `collection` changes, and once immediately.
@@ -205,6 +217,32 @@ export class RivuletClient extends Emitter {
     return this.#db.mutate(fn).result;
   }
 
+  /** Produce a portable point-in-time snapshot of the current state. */
+  snapshot() {
+    return this.#db.snapshot();
+  }
+
+  /**
+   * Load and merge a snapshot into the local database state.
+   * @param {object} snap
+   * @returns {number} merged document count
+   */
+  loadSnapshot(snap) {
+    if (this.#closed) throw new ValidationError('client is closed');
+    return this.#db.loadSnapshot(snap);
+  }
+
+  /**
+   * Reclaim CRDT bookkeeping below a causally stable timestamp.
+   * @param {string} stableTs
+   * @returns {number} count of reclaimed entries
+   */
+  gc(stableTs) {
+    if (this.#closed) throw new ValidationError('client is closed');
+    return this.#db.gc(stableTs);
+  }
+
+
   /* ----------------------------------------------------------------- sync */
 
   /** Force a reconciliation now. Resolves when the round completes. */
@@ -224,11 +262,67 @@ export class RivuletClient extends Emitter {
   /** Tell the engine the device is back online, short-circuiting backoff. */
   resume() { this.#engine?.resume(); }
 
+  /**
+   * Listen for sync engine status changes ('offline', 'connecting', 'syncing', 'live', 'unauthorised').
+   * Immediately calls fn with the current status.
+   * @param {(status: string, event: object) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onStatus(fn) {
+    fn(this.status, { status: this.status, previous: null });
+    return this.on('status', (e) => fn(e.status, e));
+  }
+
+  /**
+   * Wait until the client sync engine enters the target status.
+   * @param {string} target
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs]
+   * @returns {Promise<boolean>}
+   */
+  async waitForStatus(target, { timeoutMs = 5000 } = {}) {
+    if (this.status === target) return true;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`Timed out waiting for status '${target}' (currently '${this.status}')`));
+      }, timeoutMs);
+      const off = this.on('status', (e) => {
+        if (e.status === target) {
+          clearTimeout(timer);
+          off();
+          resolve(true);
+        }
+      });
+    });
+  }
+
   /** Operations written locally but not yet acknowledged by the server. */
   async pendingCount() {
     await this.flush();
     return this.#log.outboxSize(this.#db.node);
   }
+
+  /**
+   * Wait until all pending local writes are flushed and acknowledged by the server.
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs] maximum wait time
+   * @param {number} [opts.pollIntervalMs] interval between checks
+   * @returns {Promise<boolean>}
+   */
+  async waitForIdle({ timeoutMs = 5000, pollIntervalMs = 20 } = {}) {
+    await this.flush();
+    if ((await this.pendingCount()) === 0) return true;
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      if (this.#engine) await this.sync();
+      await this.flush();
+      if ((await this.pendingCount()) === 0) return true;
+      await new Promise((r) => setTimeout(r, pollIntervalMs));
+    }
+    return (await this.pendingCount()) === 0;
+  }
+
 
   async stats() {
     return {
@@ -240,6 +334,18 @@ export class RivuletClient extends Emitter {
       sync: this.#engine?.stats ?? { status: Status.OFFLINE },
     };
   }
+
+  /** Whether the underlying storage adapter supports compaction. */
+  get canCompact() {
+    return this.#log.canCompact;
+  }
+
+  /** Reclaim freed storage space if the storage adapter supports it. */
+  async vacuum() {
+    await this.flush();
+    return this.#log.vacuum();
+  }
+
 
   async close() {
     this.#closed = true;

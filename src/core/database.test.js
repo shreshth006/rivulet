@@ -133,10 +133,13 @@ test('multi-value fields surface a conflict for review', () => {
   assert.equal(conflicts.length, 1);
   assert.deepEqual(conflicts[0].fields[0].values.sort(), [900, 950]);
   assert.deepEqual(a.conflicts(), b.conflicts());
+  assert.equal(a.hasConflict('notes', id), true);
+  assert.equal(b.hasConflict('notes', id), true);
 
   // Resolving is an ordinary write, made after seeing both.
   deliver(a.mutate((tx) => tx.set('notes', id, 'estimate', 925)).ops, b);
   assert.equal(b.conflicts('notes').length, 0);
+  assert.equal(b.hasConflict('notes', id), false);
   assert.equal(b.get('notes', id).estimate, 925);
 });
 
@@ -277,3 +280,117 @@ test('an untouched field reads the same as an emptied one, on every replica', ()
   assert.equal(a.get('notes', id).body, '');
   assert.deepEqual(a.get('notes', id), b.get('notes', id));
 });
+
+test('exists checks document presence and deletion status', () => {
+  const db = makeDb('a');
+  assert.equal(db.exists('notes', 'missing'), false);
+
+  const id = db.mutate((tx) => tx.create('notes', { title: 'check' })).result;
+  assert.equal(db.exists('notes', id), true);
+
+  db.mutate((tx) => tx.delete('notes', id));
+  assert.equal(db.exists('notes', id), false);
+
+  db.mutate((tx) => tx.restore('notes', id));
+  assert.equal(db.exists('notes', id), true);
+});
+
+test('find and list support function predicates and object filters', () => {
+  const db = makeDb('a');
+  const id1 = db.mutate((tx) => tx.create('notes', { title: 'First', tags: ['infra', 'urgent'], pinned: true })).result;
+  const id2 = db.mutate((tx) => tx.create('notes', { title: 'Second', tags: ['infra'], pinned: false })).result;
+  const id3 = db.mutate((tx) => tx.create('notes', { title: 'Third', tags: ['todo'], pinned: false })).result;
+
+  // Object filter matching primitive and array membership
+  assert.equal(db.find('notes', { title: 'Second' })?.id, id2);
+  assert.equal(db.find('notes', { tags: 'urgent' })?.id, id1);
+  assert.equal(db.find('notes', { title: 'Nonexistent' }), null);
+
+  const pinned = db.list('notes', { where: { pinned: true } });
+  assert.equal(pinned.length, 1);
+  assert.equal(pinned[0].id, id1);
+
+  const infra = db.list('notes', { where: { tags: 'infra' } });
+  assert.equal(infra.length, 2);
+
+  // Function predicate
+  const custom = db.find('notes', (doc) => doc.title.startsWith('Th'));
+  assert.equal(custom?.id, id3);
+});
+
+test('query filters support comparison and logical operators', () => {
+  const db = makeDb('a');
+  const id1 = db.mutate((tx) => tx.create('notes', { title: 'Note A', reads: 10, pinned: true })).result;
+  const id2 = db.mutate((tx) => tx.create('notes', { title: 'Note B', reads: 25, pinned: false })).result;
+  const id3 = db.mutate((tx) => tx.create('notes', { title: 'Note C', reads: 50, pinned: true })).result;
+
+  // $gt and $lt
+  const mid = db.list('notes', { where: { reads: { $gt: 10, $lt: 50 } } });
+  assert.equal(mid.length, 1);
+  assert.equal(mid[0].id, id2);
+
+  // $gte and $lte
+  const allExceptOne = db.list('notes', { where: { reads: { $gte: 25 } } });
+  assert.equal(allExceptOne.length, 2);
+
+  // $ne
+  const notA = db.list('notes', { where: { title: { $ne: 'Note A' } } });
+  assert.equal(notA.length, 2);
+
+  // $in and $nin
+  const inList = db.list('notes', { where: { reads: { $in: [10, 50] } } });
+  assert.equal(inList.length, 2);
+
+  const notInList = db.list('notes', { where: { reads: { $nin: [10, 50] } } });
+  assert.equal(notInList.length, 1);
+  assert.equal(notInList[0].id, id2);
+
+  // $regex
+  const matchesRegex = db.list('notes', { where: { title: { $regex: /^Note [BC]$/ } } });
+  assert.equal(matchesRegex.length, 2);
+});
+
+test('query supports field projection with select option', () => {
+  const db = makeDb('a');
+  const id = db.mutate((tx) => tx.create('notes', {
+    title: 'Projected Note', body: 'Very long text content that we may not need', tags: ['infra'], reads: 42,
+  })).result;
+
+  const projected = db.find('notes', { id }, { select: ['title', 'reads'] });
+  assert.equal(projected.id, id);
+  assert.equal(projected.title, 'Projected Note');
+  assert.equal(projected.reads, 42);
+  assert.equal(projected.body, undefined);
+  assert.equal(projected.tags, undefined);
+
+  const listProjected = db.list('notes', { select: ['title'] });
+  assert.equal(listProjected.length, 1);
+  assert.deepEqual(listProjected[0], { id, title: 'Projected Note' });
+});
+
+test('query list supports string and object sorting specs', () => {
+  const db = makeDb('a');
+  db.mutate((tx) => tx.create('notes', { title: 'Zebra', reads: 10 }));
+  db.mutate((tx) => tx.create('notes', { title: 'Apple', reads: 30 }));
+  db.mutate((tx) => tx.create('notes', { title: 'Mango', reads: 20 }));
+
+  // Ascending string sort
+  const asc = db.list('notes', { sort: 'title' });
+  assert.deepEqual(asc.map((n) => n.title), ['Apple', 'Mango', 'Zebra']);
+
+  // Descending string sort with '-'
+  const desc = db.list('notes', { sort: '-title' });
+  assert.deepEqual(desc.map((n) => n.title), ['Zebra', 'Mango', 'Apple']);
+
+  // Object sort
+  const byReadsDesc = db.list('notes', { sort: { reads: -1 } });
+  assert.deepEqual(byReadsDesc.map((n) => n.reads), [30, 20, 10]);
+});
+
+test('Database exposes schema and schemaFingerprint accessors', () => {
+  const db = makeDb('a');
+  assert.equal(db.schema, notebookSchema);
+  assert.equal(db.schemaFingerprint, notebookSchema.fingerprint);
+  assert.equal(typeof db.schemaFingerprint, 'string');
+});
+

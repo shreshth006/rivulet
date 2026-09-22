@@ -185,6 +185,8 @@ export class OpLog extends Emitter {
 
   async getMeta(key) { this.#assertOpen(); return this.#adapter.getMeta(key); }
   async setMeta(key, value) { this.#assertOpen(); return this.#adapter.setMeta(key, value); }
+  async deleteMeta(key) { this.#assertOpen(); return this.#adapter.setMeta(key, undefined); }
+  async hasMeta(key) { this.#assertOpen(); return (await this.#adapter.getMeta(key)) !== undefined; }
 
   /**
    * This replica's durable identity, minted on first run.
@@ -230,6 +232,12 @@ export class OpLog extends Emitter {
 
   /* -------------------------------------------------------- compaction */
 
+  /** Whether the underlying storage adapter supports snapshotting and compaction. */
+  get canCompact() {
+    return typeof this.#adapter.saveSnapshot === 'function' &&
+           typeof this.#adapter.truncateBelow === 'function';
+  }
+
   /**
    * Replace the covered prefix of the log with a snapshot.
    *
@@ -250,14 +258,87 @@ export class OpLog extends Emitter {
     return removed;
   }
 
+  /** Save a snapshot into storage without log truncation. */
+  async saveSnapshot(state, upTo, opts) {
+    this.#assertOpen();
+    if (typeof this.#adapter.saveSnapshot !== 'function') {
+      throw new StorageError('this adapter does not support snapshots', { adapter: this.#adapter.name });
+    }
+    const frontier = upTo instanceof VersionVector ? upTo.toJSON() : upTo;
+    await this.#adapter.saveSnapshot(state, frontier, opts);
+    this.emit('snapshot', { frontier });
+  }
+
   async latestSnapshot() {
     return this.#adapter.latestSnapshot?.() ?? null;
+  }
+
+
+  /** Reclaim freed storage space if the underlying adapter supports it (e.g. SQLite). */
+  async vacuum() {
+    this.#assertOpen();
+    if (typeof this.#adapter.vacuum === 'function') {
+      await this.#adapter.vacuum();
+      return true;
+    }
+    return false;
   }
 
   async clear() {
     this.#assertOpen();
     await this.#adapter.clear();
     this.#ranges.clear();
+  }
+
+  /**
+   * Export recorded operations in the log.
+   * @param {object} [opts]
+   * @param {string} [opts.collection]
+   * @param {string} [opts.doc]
+   * @returns {Promise<object[]>}
+   */
+  async exportOps(opts = {}) {
+    this.#assertOpen();
+    return this.#adapter.readOps(opts);
+  }
+
+  /**
+   * Import operations into the log.
+   * @param {object[]} ops
+   * @returns {Promise<{added: number, duplicates: number, fresh: object[]}>}
+   */
+  async importOps(ops) {
+    this.#assertOpen();
+    return this.append(ops);
+  }
+
+  /**
+   * Export operations serialized as JSON.
+   * @param {object} [opts]
+   * @param {number|string} [opts.indent]
+   * @returns {Promise<string>}
+   */
+  async exportJson({ indent, ...opts } = {}) {
+    const ops = await this.exportOps(opts);
+    return JSON.stringify(ops, null, indent);
+  }
+
+  /**
+   * Import operations from a JSON serialized string.
+   * @param {string} jsonString
+   * @returns {Promise<{added: number, duplicates: number, fresh: object[]}>}
+   */
+  async importJson(jsonString) {
+    let parsed;
+    try {
+      parsed = JSON.parse(jsonString);
+    } catch (err) {
+      throw new StorageError('invalid JSON for operation import', { cause: String(err) });
+    }
+    if (!Array.isArray(parsed)) {
+      throw new StorageError('operation import JSON must be an array', { received: typeof parsed });
+    }
+    return this.importOps(parsed);
   }
 
   get stats() {

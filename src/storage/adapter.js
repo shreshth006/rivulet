@@ -208,4 +208,22 @@ export class MemoryAdapter {
     for (const op of this.#ops.values()) n += JSON.stringify(op).length;
     return n;
   }
+
+  /** Telemetry breakdown for in-memory storage. */
+  async stats() {
+    this.#assertOpen();
+    const byNode = {};
+    for (const [node, map] of this.#byNode) {
+      byNode[node] = map.size;
+    }
+    return {
+      adapter: 'memory',
+      name: this.name,
+      operations: this.#ops.size,
+      nodes: this.#byNode.size,
+      metadataKeys: this.#meta.size,
+      sizeBytes: await this.sizeBytes(),
+      byNode,
+    };
+  }
 }

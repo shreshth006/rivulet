@@ -39,6 +39,8 @@ export class PNCounter {
     return total;
   }
 
+  get isZero() { return this.value === 0; }
+
   /** Per-replica breakdown -- useful for debugging a diverged counter. */
   get contributions() {
     const nodes = new Set([...this.#p.keys(), ...this.#n.keys()]);
@@ -49,6 +51,9 @@ export class PNCounter {
 
   /** @param {number} delta may be negative */
   static op(delta) { return { d: delta }; }
+
+  /** Generate an op that cancels the current total value back to zero. */
+  resetOp() { return PNCounter.op(-this.value); }
 
   apply(payload, meta) {
     const delta = Number(payload.d) || 0;

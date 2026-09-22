@@ -36,12 +36,17 @@ Reads are synchronous and always local.
 
 ```js
 client.get('notes', id);                  // null when absent or deleted
+client.exists('notes', id);               // boolean: present and not deleted
+client.find('notes', { pinned: true });   // first matching document, or null
 client.list('notes', { where, sort, limit, offset, includeDeleted });
-client.count('notes');
+client.count('notes', { where });
 client.conflicts('notes');                // multi-value fields needing a choice
 
 const off = client.subscribe('notes', (rows) => render(rows));
 ```
+
+`where` accepts a predicate function `(value, doc) => boolean` or an object filter
+matching primitives or collection membership (e.g. `{ tags: 'urgent', pinned: true }`).
 
 `subscribe` fires once immediately and then on every local or remote change. It
 re-reads rather than diffing: coarse, but it removes a whole class of stale-view

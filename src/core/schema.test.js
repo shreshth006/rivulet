@@ -80,3 +80,19 @@ test('a schema serialises back to its declared form', () => {
   assert.equal(schema.has('notes'), true);
   assert.equal(schema.has('nope'), false);
 });
+
+test('CollectionSchema validate rejects invalid types and accepts valid documents', () => {
+  const schema = defineSchema({
+    items: { title: 'lww', count: 'counter', tags: 'set' },
+  });
+  const coll = schema.collection('items');
+
+  // Valid documents
+  assert.equal(coll.validate({ title: 'Book', count: 5, tags: ['fiction'] }), true);
+  assert.equal(coll.validate({ title: 'Magazine' }), true);
+
+  // Invalid types
+  assert.throws(() => coll.validate({ count: 'not-a-number' }), /must be a number/);
+  assert.throws(() => coll.validate({ tags: 'not-an-array' }), /must be an array/);
+  assert.throws(() => coll.validate({ unknownField: true }), /unknown field/);
+});

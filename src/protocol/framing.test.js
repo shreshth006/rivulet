@@ -1,7 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { packMessage, unpackMessage, Encoding, negotiateEncoding, ByteMeter } from '#protocol/framing';
-import { sync, ack, hello, welcome, validateMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION } from '#protocol/messages';
+import {
+  sync, ack, hello, welcome, event, errorMessage,
+  validateMessage, safeParseMessage, readVector, assertSchemaMatch, MessageType, PROTOCOL_VERSION,
+  isHelloMessage, isWelcomeMessage, isSyncMessage, isAckMessage, isEventMessage, isErrorMessage,
+} from '#protocol/messages';
+
 import { encodeOps } from '#protocol/codec';
 import { ProtocolError, ValidationError } from '#core/errors';
 import { VersionVector } from '#core/version-vector';
@@ -67,11 +72,17 @@ test('the byte meter reports what a session actually cost', async () => {
   const s = meter.summary;
   assert.equal(s.sentFrames, 1);
   assert.equal(s.recvFrames, 1);
+  assert.equal(s.totalFrames, 2);
   assert.ok(s.totalWire < s.sentRaw + s.recvRaw);
   assert.ok(s.compressionRatio < 0.2);
+  assert.ok(s.savedBytes > 0);
+  assert.equal(s.savedBytes, meter.savedBytes);
+  assert.ok(s.savedPercentage > 75);
   meter.reset();
   assert.equal(meter.summary.totalWire, 0);
+  assert.equal(meter.savedBytes, 0);
 });
+
 
 test('messages carry their protocol version and validate', () => {
   const h = hello({ node: NODE, room: 'r1', schema: 'fp', compression: [Encoding.DEFLATE] });
@@ -106,3 +117,52 @@ test('a schema mismatch is reported clearly', () => {
   assertSchemaMatch('fp', undefined);
   assert.throws(() => assertSchemaMatch('fp-a', 'fp-b'), ValidationError);
 });
+
+test('message type guards identify protocol messages accurately', () => {
+  const h = hello({ node: NODE, room: 'r1' });
+  const w = welcome({ node: NODE, room: 'r1' });
+  const s = sync({ node: NODE, room: 'r1', have: {} });
+  const a = ack({ node: NODE });
+  const ev = event({ node: NODE });
+  const err = errorMessage('BAD', 'something broke');
+
+  assert.equal(isHelloMessage(h), true);
+  assert.equal(isHelloMessage(s), false);
+
+  assert.equal(isWelcomeMessage(w), true);
+  assert.equal(isWelcomeMessage(h), false);
+
+  assert.equal(isSyncMessage(s), true);
+  assert.equal(isSyncMessage(a), false);
+
+  assert.equal(isAckMessage(a), true);
+  assert.equal(isAckMessage(s), false);
+
+  assert.equal(isEventMessage(ev), true);
+  assert.equal(isEventMessage(w), false);
+
+  assert.equal(isErrorMessage(err), true);
+  assert.equal(isErrorMessage(null), false);
+  assert.equal(isErrorMessage(undefined), false);
+  assert.equal(isErrorMessage('hello'), false);
+});
+
+test('safeParseMessage validates messages safely without throwing', () => {
+  const json = JSON.stringify(sync({ node: NODE, room: 'r1', have: {} }));
+  const parsed = safeParseMessage(json, MessageType.SYNC);
+  assert.equal(parsed.ok, true);
+  assert.equal(parsed.value.t, MessageType.SYNC);
+  assert.equal(parsed.error, null);
+
+  const badJson = safeParseMessage('{malformed json', MessageType.SYNC);
+  assert.equal(badJson.ok, false);
+  assert.equal(badJson.value, null);
+  assert.ok(badJson.error);
+
+  const typeMismatch = safeParseMessage(json, MessageType.ACK);
+  assert.equal(typeMismatch.ok, false);
+  assert.equal(typeMismatch.value, null);
+  assert.ok(typeMismatch.error instanceof ProtocolError);
+});
+
+

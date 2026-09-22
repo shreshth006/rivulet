@@ -49,6 +49,7 @@ export class ORSet {
   }
 
   get size() { return this.#live.size; }
+  get isEmpty() { return this.#live.size === 0; }
   has(el) { return this.#live.has(keyOf(el)); }
 
   /** Payload for adding `el`. The op's HLC timestamp becomes its tag. */
@@ -61,6 +62,18 @@ export class ORSet {
   op(el) {
     const entry = this.#live.get(keyOf(el));
     return { r: el, t: entry ? [...entry.tags] : [] };
+  }
+
+  /**
+   * Return remove payloads for all currently observed elements.
+   * @returns {Array<{r: any, t: string[]}>}
+   */
+  clearOps() {
+    const ops = [];
+    for (const entry of this.#live.values()) {
+      ops.push({ r: entry.el, t: [...entry.tags] });
+    }
+    return ops;
   }
 
   apply(payload, meta) {

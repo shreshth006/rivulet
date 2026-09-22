@@ -70,6 +70,18 @@ test('LWW keeps the highest timestamp regardless of arrival order', () => {
   assert.equal(a.crdt.value, winner);
 });
 
+test('LWWRegister hasValue and isInitialized reflect content state', () => {
+  const reg = new LWWRegister();
+  assert.equal(reg.hasValue, false);
+  assert.equal(reg.isInitialized, false);
+
+  const [a] = replicas(1, () => reg);
+  a.emit(() => LWWRegister.op('hello'));
+  assert.equal(reg.hasValue, true);
+  assert.equal(reg.isInitialized, true);
+  assert.equal(reg.value, 'hello');
+});
+
 test('MVRegister surfaces concurrent writes and collapses once one is seen', () => {
   const [a, b] = replicas(2, () => new MVRegister());
   const wa = a.emit((c) => c.op('from-a'));
@@ -87,6 +99,24 @@ test('MVRegister surfaces concurrent writes and collapses once one is seen', () 
   assert.deepEqual(b.crdt.values, ['resolved']);
 });
 
+test('MVRegister size, isEmpty and hasValue reflect conflict state', () => {
+  const reg = new MVRegister();
+  assert.equal(reg.isEmpty, true);
+  assert.equal(reg.size, 0);
+  assert.equal(reg.hasValue('x'), false);
+
+  const [a, b] = replicas(2, () => new MVRegister());
+  const wa = a.emit((c) => c.op('first'));
+  const wb = b.emit((c) => c.op('second'));
+  a.receive(wb);
+
+  assert.equal(a.crdt.size, 2);
+  assert.equal(a.crdt.isEmpty, false);
+  assert.equal(a.crdt.hasValue('first'), true);
+  assert.equal(a.crdt.hasValue('second'), true);
+  assert.equal(a.crdt.hasValue('third'), false);
+});
+
 test('PNCounter adds concurrent increments instead of overwriting', () => {
   const [a, b, c] = replicas(3, () => new PNCounter());
   const oa = a.emit(() => PNCounter.op(1));
@@ -99,6 +129,19 @@ test('PNCounter adds concurrent increments instead of overwriting', () => {
   assert.equal(a.crdt.value, -1, 'two +1s and one -3 must total -1, not -3');
   assertConverged([a, b, c]);
   assert.equal(a.crdt.contributions.length, 3);
+});
+
+test('PNCounter resetOp cancels current value to zero', () => {
+  const [a] = replicas(1, () => new PNCounter());
+  assert.equal(a.crdt.isZero, true);
+
+  a.emit(() => PNCounter.op(42));
+  assert.equal(a.crdt.value, 42);
+  assert.equal(a.crdt.isZero, false);
+
+  a.emit((c) => c.resetOp());
+  assert.equal(a.crdt.value, 0);
+  assert.equal(a.crdt.isZero, true);
 });
 
 test('ORSet is add-wins and supports re-adding a removed element', () => {
@@ -129,4 +172,23 @@ test('ORSet handles object members by value', () => {
   const rm = b.emit((c) => c.op({ id: 1, tag: 'urgent' }));
   a.receive(rm);
   assert.equal(a.crdt.size, 0);
+  assert.equal(a.crdt.isEmpty, true);
+});
+
+test('ORSet clearOps generates removes for all observed elements', () => {
+  const [a] = replicas(1, () => new ORSet());
+  assert.equal(a.crdt.isEmpty, true);
+
+  a.receive(a.emit(() => ORSet.op('apple')));
+  a.receive(a.emit(() => ORSet.op('banana')));
+  assert.equal(a.crdt.size, 2);
+  assert.equal(a.crdt.isEmpty, false);
+
+  const clearOps = a.crdt.clearOps();
+  assert.equal(clearOps.length, 2);
+  for (const op of clearOps) {
+    a.receive(a.emit(() => op));
+  }
+  assert.equal(a.crdt.size, 0);
+  assert.equal(a.crdt.isEmpty, true);
 });

@@ -56,7 +56,8 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 222 tests, no dependencies
+npm test                                            # 258 tests, no dependencies
+npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
 
@@ -124,7 +125,9 @@ Further reading: **[how it works, end to end](docs/00-how-it-works.md)** ·
 [CRDT design](docs/02-crdt-design.md) ·
 [sync protocol](docs/03-sync-protocol.md) ·
 [storage](docs/04-storage.md) ·
-[evaluation method](docs/05-evaluation.md)
+[evaluation method](docs/05-evaluation.md) ·
+[querying](docs/08-querying.md) ·
+[fuzzing and correctness](docs/09-fuzzing-and-correctness.md)
 
 ## Evaluation
 
@@ -218,19 +221,24 @@ src/client/     sync engine, adaptive batching, transports
 src/server/     sync server core and its HTTP/SSE transport
 bench/          network simulator and the evaluation scenarios
 apps/           demo notebook and the server CLI
-examples/       two runnable examples, start with two-replicas.js
-docs/           design documents and decision records
+examples/       runnable examples and interactive REPL (start with two-replicas.js or npm run repl)
+docs/           design documents, query guides, and correctness papers
 paper/          the write-up
 ```
 
 Start with [`examples/two-replicas.js`](examples/two-replicas.js) — the whole
-model in about eighty lines, runnable with no setup.
+model in about eighty lines, runnable with no setup. Or spin up [`npm run repl`](examples/repl.js)
+to manipulate multi-replica databases in real time.
 
 ## Testing
 
 ```bash
-npm test              # everything
+npm test              # everything (258 tests)
 npm run test:core     # CRDT laws and core data structures
+npm run test:fuzz     # random interleaved concurrent execution and fuzzing
+npm run test:storage  # storage adapter conformance
+npm run test:client   # client sync and lifecycle
+npm run check         # static syntax, import resolution, and orphan check
 ```
 
 The CRDT types are checked against their algebraic laws by generating

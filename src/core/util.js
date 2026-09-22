@@ -196,3 +196,96 @@ export class Emitter {
 
   removeAllListeners() { this.#listeners.clear(); }
 }
+
+/** Fast structured clone for plain objects, arrays, Sets, Maps, and primitives. */
+export function cloneDeep(val) {
+  if (val === null || typeof val !== 'object') return val;
+  if (val instanceof Date) return new Date(val.getTime());
+  if (val instanceof RegExp) return new RegExp(val.source, val.flags);
+  if (val instanceof Set) {
+    const copy = new Set();
+    for (const item of val) copy.add(cloneDeep(item));
+    return copy;
+  }
+  if (val instanceof Map) {
+    const copy = new Map();
+    for (const [k, v] of val) copy.set(cloneDeep(k), cloneDeep(v));
+    return copy;
+  }
+  if (Array.isArray(val)) {
+    return val.map((item) => cloneDeep(item));
+  }
+  if (val instanceof Uint8Array) {
+    const copy = new Uint8Array(val.length);
+    copy.set(val);
+    return copy;
+  }
+  const copy = {};
+  for (const [k, v] of Object.entries(val)) {
+    copy[k] = cloneDeep(v);
+  }
+  return copy;
+}
+
+/** Fixed-capacity LRU cache backed by Map insertion order. */
+export class LruCache {
+  #capacity;
+  #map = new Map();
+
+  constructor(capacity = 256) {
+    if (capacity <= 0) throw new ValidationError('capacity must be greater than 0', { capacity });
+    this.#capacity = capacity;
+  }
+
+  get capacity() { return this.#capacity; }
+  get size() { return this.#map.size; }
+
+  has(key) { return this.#map.has(key); }
+
+  get(key) {
+    if (!this.#map.has(key)) return undefined;
+    const val = this.#map.get(key);
+    this.#map.delete(key);
+    this.#map.set(key, val);
+    return val;
+  }
+
+  set(key, value) {
+    if (this.#map.has(key)) {
+      this.#map.delete(key);
+    } else if (this.#map.size >= this.#capacity) {
+      const oldestKey = this.#map.keys().next().value;
+      this.#map.delete(oldestKey);
+    }
+    this.#map.set(key, value);
+    return this;
+  }
+
+  delete(key) { return this.#map.delete(key); }
+  clear() { this.#map.clear(); }
+}
+
+/**
+ * Asynchronously map an array of items with bounded concurrency.
+ * @template T, R
+ * @param {T[]} items
+ * @param {(item: T, index: number) => Promise<R>} fn
+ * @param {{ concurrency?: number }} [opts]
+ * @returns {Promise<R[]>}
+ */
+export async function asyncMap(items, fn, { concurrency = 4 } = {}) {
+  const results = new Array(items.length);
+  const limit = Math.max(1, concurrency);
+  let nextIndex = 0;
+
+  async function worker() {
+    while (nextIndex < items.length) {
+      const idx = nextIndex++;
+      results[idx] = await fn(items[idx], idx);
+    }
+  }
+
+  const workers = Array.from({ length: Math.min(items.length, limit) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}

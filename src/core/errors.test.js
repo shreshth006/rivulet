@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   RivuletError, ValidationError, ClockDriftError, ProtocolError,
-  StorageError, TransportError, AuthError, invariant,
+  StorageError, TransportError, AuthError, LimitError, invariant,
 } from '#core/errors';
 
 test('every error carries a stable code and its own name', () => {
@@ -13,6 +13,7 @@ test('every error carries a stable code and its own name', () => {
     [new StorageError('x'), 'E_STORAGE', 'StorageError'],
     [new TransportError('x'), 'E_TRANSPORT', 'TransportError'],
     [new AuthError('x'), 'E_AUTH', 'AuthError'],
+    [new LimitError('x'), 'E_LIMIT', 'LimitError'],
   ];
   for (const [err, code, name] of cases) {
     // Callers branch on `code`, never on message text, so that rewording an

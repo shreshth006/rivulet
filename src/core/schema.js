@@ -89,6 +89,29 @@ export class CollectionSchema {
 
   /** Declared fields, excluding reserved ones. */
   get userFields() { return [...this.fields.values()].filter((f) => f.name !== DELETED_FIELD); }
+
+  /**
+   * Validate document values against this collection's schema.
+   * @param {Record<string, any>} values
+   * @returns {boolean}
+   */
+  validate(values) {
+    if (!values || typeof values !== 'object') {
+      throw new ValidationError('document must be an object', { values });
+    }
+    for (const [key, val] of Object.entries(values)) {
+      if (key === 'id') continue;
+      const def = this.field(key);
+      if (val === null || val === undefined) continue;
+      if (def.type === 'counter' && (typeof val !== 'number' || !Number.isFinite(val))) {
+        throw new ValidationError(`field '${key}' must be a number for counter`, { key, val });
+      }
+      if ((def.type === 'set' || (def.type === 'seq' && !def.asText)) && !Array.isArray(val) && !(val instanceof Set)) {
+        throw new ValidationError(`field '${key}' must be an array or set`, { key, val });
+      }
+    }
+    return true;
+  }
 }
 
 export class Schema {

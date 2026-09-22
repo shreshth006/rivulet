@@ -28,6 +28,66 @@ import { ValidationError } from '#core/errors';
 
 const SNAPSHOT_VERSION = 1;
 
+function matchField(actual, expected) {
+  if (expected && typeof expected === 'object' && !Array.isArray(expected) && !(expected instanceof RegExp)) {
+    for (const [op, target] of Object.entries(expected)) {
+      switch (op) {
+        case '$eq': if (actual !== target) return false; break;
+        case '$ne': if (actual === target) return false; break;
+        case '$gt': if (!(actual > target)) return false; break;
+        case '$gte': if (!(actual >= target)) return false; break;
+        case '$lt': if (!(actual < target)) return false; break;
+        case '$lte': if (!(actual <= target)) return false; break;
+        case '$in': if (!Array.isArray(target) || !target.includes(actual)) return false; break;
+        case '$nin': if (Array.isArray(target) && target.includes(actual)) return false; break;
+        case '$exists': if ((actual !== undefined && actual !== null) !== Boolean(target)) return false; break;
+        case '$regex': {
+          const re = target instanceof RegExp ? target : new RegExp(target);
+          if (!re.test(String(actual ?? ''))) return false;
+          break;
+        }
+        default: if (actual !== expected) return false;
+      }
+    }
+    return true;
+  }
+  if (expected instanceof RegExp) return expected.test(String(actual ?? ''));
+  if (Array.isArray(actual)) return actual.includes(expected);
+  if (actual instanceof Set) return actual.has(expected);
+  return actual === expected;
+}
+
+function makeComparator(sort) {
+  if (typeof sort === 'function') return sort;
+  if (typeof sort === 'string') {
+    const desc = sort.startsWith('-');
+    const field = desc ? sort.slice(1) : sort;
+    return (a, b) => {
+      const va = a[field], vb = b[field];
+      if (va === vb) return 0;
+      if (va === undefined || va === null) return 1;
+      if (vb === undefined || vb === null) return -1;
+      return desc ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
+    };
+  }
+  if (sort && typeof sort === 'object') {
+    const entries = Object.entries(sort);
+    return (a, b) => {
+      for (const [field, dir] of entries) {
+        const desc = dir === -1 || dir === 'desc';
+        const va = a[field], vb = b[field];
+        if (va !== vb) {
+          if (va === undefined || va === null) return 1;
+          if (vb === undefined || vb === null) return -1;
+          return desc ? (va < vb ? 1 : -1) : (va > vb ? 1 : -1);
+        }
+      }
+      return 0;
+    };
+  }
+  return null;
+}
+
 export class Database extends Emitter {
   #schema;
   #clock;
@@ -52,6 +112,7 @@ export class Database extends Emitter {
   }
 
   get schema() { return this.#schema; }
+  get schemaFingerprint() { return this.#schema.fingerprint; }
   get node() { return this.#clock.node; }
   get clock() { return this.#clock; }
   get seq() { return this.#factory.seq; }
@@ -130,23 +191,54 @@ export class Database extends Emitter {
    * @param {string} collection
    * @param {object} [opts]
    * @param {boolean} [opts.includeDeleted]
-   * @param {(value: any, doc: Document) => boolean} [opts.where]
+   * @param {((value: any, doc: Document) => boolean)|Record<string, any>} [opts.where]
    * @param {(a: any, b: any) => number} [opts.sort]
    * @param {number} [opts.limit]
    * @param {number} [opts.offset]
+   * @param {string[]} [opts.select] fields to project
    */
-  list(collection, { includeDeleted = false, where, sort, limit, offset = 0 } = {}) {
+  list(collection, { includeDeleted = false, where, sort, limit, offset = 0, select } = {}) {
     this.#schema.collection(collection);
+    const filterFn = typeof where === 'function'
+      ? where
+      : (typeof where === 'object' && where !== null)
+        ? (val) => Object.entries(where).every(([k, v]) => matchField(val[k], v))
+        : null;
     let out = [];
     for (const doc of this.#collections.get(collection).values()) {
       if (doc.deleted && !includeDeleted) continue;
       const value = doc.value({ includeDeleted });
-      if (value && (!where || where(value, doc))) out.push(value);
+      if (value && (!filterFn || filterFn(value, doc))) {
+        if (select && Array.isArray(select) && select.length) {
+          const projected = { id: value.id };
+          for (const k of select) if (k in value) projected[k] = value[k];
+          out.push(projected);
+        } else {
+          out.push(value);
+        }
+      }
     }
-    if (sort) out.sort(sort);
+    const cmp = makeComparator(sort);
+    if (cmp) out.sort(cmp);
     if (offset) out = out.slice(offset);
     if (limit !== undefined) out = out.slice(0, limit);
     return out;
+  }
+
+  /**
+   * Find the first document matching `where`.
+   * @param {string} collection
+   * @param {((value: any, doc: Document) => boolean)|Record<string, any>} where
+   * @param {object} [opts]
+   * @returns {Record<string,any>|null}
+   */
+  find(collection, where, opts = {}) {
+    const results = this.list(collection, { ...opts, where, limit: 1 });
+    return results[0] ?? null;
+  }
+
+  findOne(collection, where, opts = {}) {
+    return this.find(collection, where, opts);
   }
 
   /** Documents holding unresolved concurrent values, for a conflict-review UI. */
@@ -160,6 +252,10 @@ export class Database extends Emitter {
       }
     }
     return out;
+  }
+
+  hasConflict(collection, id) {
+    return this.document(collection, id)?.hasConflict ?? false;
   }
 
   count(collection, opts) { return this.list(collection, opts).length; }

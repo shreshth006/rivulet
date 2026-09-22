@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toHex, randomHex, makeRng, randInt, pick, shuffled,
-  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter,
+  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep, LruCache, asyncMap,
 } from '#core/util';
 import { ValidationError } from '#core/errors';
 
@@ -142,4 +142,71 @@ test('a throwing listener does not break the emit loop, and is reported', () => 
   assert.equal(errors.length, 1, 'and the failure must not vanish');
   assert.match(errors[0][0], /blew up/);
   assert.equal(errors[0][1], 'x');
+});
+
+test('cloneDeep creates independent deep copies of complex structures', () => {
+  const original = {
+    num: 42,
+    str: 'hello',
+    arr: [1, { nested: 'val' }, [3, 4]],
+    set: new Set(['a', 'b']),
+    map: new Map([['k1', { v: 1 }]]),
+    date: new Date(123456789),
+    regex: /abc/gi,
+  };
+
+  const copy = cloneDeep(original);
+  assert.deepEqual(copy, original);
+
+  // Mutating copy does not alter original
+  copy.arr[1].nested = 'changed';
+  assert.equal(original.arr[1].nested, 'val');
+
+  copy.set.add('c');
+  assert.equal(original.set.has('c'), false);
+
+  copy.map.get('k1').v = 99;
+  assert.equal(original.map.get('k1').v, 1);
+});
+
+test('LruCache enforces capacity and maintains recency order', () => {
+  const cache = new LruCache(3);
+  cache.set('a', 1);
+  cache.set('b', 2);
+  cache.set('c', 3);
+
+  assert.equal(cache.size, 3);
+  assert.equal(cache.get('a'), 1); // Access 'a' to make it most recently used
+
+  cache.set('d', 4); // Evicts 'b' (oldest), not 'a'
+  assert.equal(cache.has('b'), false);
+  assert.equal(cache.get('a'), 1);
+  assert.equal(cache.get('c'), 3);
+  assert.equal(cache.get('d'), 4);
+
+  cache.delete('c');
+  assert.equal(cache.has('c'), false);
+  assert.equal(cache.size, 2);
+
+  cache.clear();
+  assert.equal(cache.size, 0);
+
+  assert.throws(() => new LruCache(0), ValidationError);
+});
+
+test('asyncMap executes concurrent tasks with bounded concurrency and preserves order', async () => {
+  const items = [10, 20, 30, 40, 50];
+  let active = 0;
+  let maxActive = 0;
+
+  const result = await asyncMap(items, async (val) => {
+    active++;
+    maxActive = Math.max(maxActive, active);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    active--;
+    return val * 2;
+  }, { concurrency: 2 });
+
+  assert.deepEqual(result, [20, 40, 60, 80, 100]);
+  assert.ok(maxActive <= 2, `expected concurrency <= 2, got ${maxActive}`);
 });

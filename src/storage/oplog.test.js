@@ -238,3 +238,100 @@ test('a closed log refuses work instead of failing obscurely', async () => {
   assert.throws(() => log.frontier(), /not open/);
   await assert.rejects(() => log.count(), /not open/);
 });
+
+test('vacuum delegates to adapter if supported and returns status', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  const memResult = await memLog.vacuum();
+  assert.equal(memResult, false);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  const sqliteResult = await sqliteLog.vacuum();
+  assert.equal(sqliteResult, true);
+  await sqliteLog.close();
+});
+
+test('canCompact reflects adapter capabilities accurately', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  assert.equal(memLog.canCompact, false);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  assert.equal(sqliteLog.canCompact, true);
+  await sqliteLog.close();
+});
+
+test('exportOps and importOps allow full round-trip of log history', async () => {
+  const source = await openLog();
+  const { ops } = sample('a', 8);
+  await source.append(ops);
+
+  const exported = await source.exportOps();
+  assert.equal(exported.length, 8);
+  assert.equal(exported[0].node, ops[0].node);
+
+  const target = await openLog();
+  const result = await target.importOps(exported);
+  assert.equal(result.added, 8);
+  assert.equal(await target.count(), 8);
+
+  const dupe = await target.importOps(exported);
+  assert.equal(dupe.added, 0);
+  assert.equal(dupe.duplicates, 8);
+});
+
+test('deleteMeta and hasMeta manage custom metadata entries', async () => {
+  const log = await openLog();
+  assert.equal(await log.hasMeta('custom_key'), false);
+
+  await log.setMeta('custom_key', { foo: 'bar' });
+  assert.equal(await log.hasMeta('custom_key'), true);
+  assert.deepEqual(await log.getMeta('custom_key'), { foo: 'bar' });
+
+  await log.deleteMeta('custom_key');
+  assert.equal(await log.hasMeta('custom_key'), false);
+  assert.equal(await log.getMeta('custom_key'), undefined);
+});
+
+test('exportJson and importJson serialize and restore operations', async () => {
+  const logA = await openLog();
+  const { ops } = sample('a', 5);
+  await logA.append(ops);
+
+  const json = await logA.exportJson({ indent: 2 });
+  assert.equal(typeof json, 'string');
+  assert.ok(json.includes(ops[0].node));
+
+  const logB = await openLog();
+  const res = await logB.importJson(json);
+  assert.equal(res.added, 5);
+  assert.equal(await logB.count(), 5);
+
+  // Rejects invalid JSON and non-arrays
+  await assert.rejects(() => logB.importJson('{not valid json'), /invalid JSON/);
+  await assert.rejects(() => logB.importJson('{"not": "array"}'), /must be an array/);
+});
+
+test('saveSnapshot saves checkpoints without truncating log', async () => {
+  const memLog = await openLog(new MemoryAdapter());
+  await assert.rejects(() => memLog.saveSnapshot({ state: 's' }, {}), /does not support snapshots/);
+
+  const sqliteLog = await openLog(new SqliteAdapter({ path: ':memory:' }));
+  const { ops } = sample('a', 6);
+  await sqliteLog.append(ops);
+
+  let snapshotEvent = null;
+  sqliteLog.on('snapshot', (e) => { snapshotEvent = e; });
+
+  await sqliteLog.saveSnapshot({ custom: 'snap' }, { [ops[0].node]: 6 });
+  assert.ok(snapshotEvent);
+  assert.equal(await sqliteLog.count(), 6);
+
+  const snap = await sqliteLog.latestSnapshot();
+  assert.deepEqual(snap.state, { custom: 'snap' });
+  await sqliteLog.close();
+});
+
+
+
+
+
+

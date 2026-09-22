@@ -22,7 +22,9 @@ const SCENARIOS = {
   batching: () => import('#bench/scenarios/batching'),
   scale: () => import('#bench/scenarios/scale'),
   overhead: () => import('#bench/scenarios/overhead'),
+  query: () => import('#bench/scenarios/query'),
 };
+
 
 function parseArgs(argv) {
   const opts = { names: [], out: null, seed: undefined, quiet: false };

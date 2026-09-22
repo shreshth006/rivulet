@@ -400,3 +400,26 @@ export function firstSeqs(batch) {
   }
   return out;
 }
+
+/**
+ * Inspect an encoded batch structure and return summary statistics.
+ * @param {object} batch
+ * @returns {{ count: number, version: number, nodes: string[], collections: string[], options: object }}
+ */
+export function batchStats(batch) {
+  if (!batch || typeof batch !== 'object') {
+    throw new ProtocolError('invalid batch object', { batch });
+  }
+  const opts = readOptions(batch);
+  const count = batch.n ?? 0;
+  const nodes = Array.isArray(batch.N) ? [...batch.N] : [];
+  const collections = Array.isArray(batch.C) ? [...batch.C] : [];
+  return {
+    count,
+    version: batch.v ?? 1,
+    nodes,
+    collections,
+    options: opts,
+  };
+}
+

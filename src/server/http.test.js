@@ -152,6 +152,37 @@ test('health and stats report the server state', async (t) => {
   assert.ok(stats.rooms[0].operations >= 1);
 });
 
+test('info and room endpoints report server metadata and room stats', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+
+  const info = await (await fetch(`${server.url}/v1/info`)).json();
+  assert.equal(info.ok, true);
+  assert.equal(info.protocolVersion, 1);
+  assert.equal(info.codecVersion, 2);
+  assert.equal(typeof info.node, 'string');
+  assert.equal(typeof info.limits, 'object');
+
+  // Room not yet opened
+  const missing = await fetch(`${server.url}/v1/room?name=http-room`);
+  assert.equal(missing.status, 404);
+
+  // Missing room param
+  const badParam = await fetch(`${server.url}/v1/room`);
+  assert.equal(badParam.status, 400);
+
+  // Connect client to open room
+  const a = await connect(server, 'info-a');
+  t.after(() => a.close());
+  await a.sync();
+
+  const roomRes = await fetch(`${server.url}/v1/room?name=http-room`);
+  assert.equal(roomRes.status, 200);
+  const roomData = await roomRes.json();
+  assert.equal(roomData.name, 'http-room');
+});
+
+
 test('unknown routes 404 rather than hanging', async (t) => {
   const server = await serve();
   t.after(() => server.close());
@@ -253,3 +284,58 @@ test('static serving refuses to escape its mount root', async (t) => {
     assert.ok(!body.includes('"name": "rivulet"'), `${attempt} leaked a file outside the root`);
   }
 });
+
+test('SyncServer room inspection, roomStats and closeRoom', async () => {
+  const engine = new SyncServer({
+    storage: async (room) => new MemoryAdapter({ name: room }),
+  });
+
+  assert.equal(engine.roomCount, 0);
+  assert.equal(engine.hasRoom('test-room'), false);
+
+  await engine.room('test-room');
+  assert.equal(engine.roomCount, 1);
+  assert.equal(engine.hasRoom('test-room'), true);
+  assert.deepEqual(engine.roomNames, ['test-room']);
+
+  const stats = await engine.roomStats('test-room');
+  assert.equal(stats.name, 'test-room');
+  assert.equal(stats.operations, 0);
+  assert.equal(stats.connections, 0);
+
+  const closed = await engine.closeRoom('test-room');
+  assert.equal(closed, true);
+  assert.equal(engine.roomCount, 0);
+  assert.equal(engine.hasRoom('test-room'), false);
+
+  assert.equal(await engine.closeRoom('nonexistent'), false);
+  await engine.close();
+});
+
+test('SyncServer maxRooms ceiling rejects opening excess rooms', async () => {
+  const { LimitError } = await import('#core/errors');
+  const engine = new SyncServer({
+    storage: async (room) => new MemoryAdapter({ name: room }),
+    maxRooms: 2,
+  });
+
+  await engine.room('room-1');
+  await engine.room('room-2');
+  assert.equal(engine.roomCount, 2);
+
+  // Accessing existing room is fine
+  await engine.room('room-1');
+
+  // Exceeding room limit throws LimitError
+  await assert.rejects(() => engine.room('room-3'), LimitError);
+
+  // Closing one room frees a slot
+  await engine.closeRoom('room-1');
+  assert.equal(engine.roomCount, 1);
+  await engine.room('room-3');
+  assert.equal(engine.roomCount, 2);
+
+  await engine.close();
+});
+
+
