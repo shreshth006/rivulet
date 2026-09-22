@@ -150,6 +150,11 @@ export class RivuletClient extends Emitter {
     client._attachWrites(writes);
     client.schemaState = schemaState;
 
+    if (engine) {
+      engine.on('status', (e) => client.emit('status', e));
+      engine.on('sync', (e) => client.emit('sync', e));
+    }
+
     // Persist every local write, and keep the clock mark ahead of it, so a
     // crash between writing and syncing cannot rewind us on the next start.
     db.on('local-ops', ({ ops }) => { writes.push(ops); });
@@ -157,6 +162,7 @@ export class RivuletClient extends Emitter {
     if (engine && autoStart) await engine.start();
     return client;
   }
+
 
   /** @internal wiring, so the queue can report errors through this emitter */
   _attachWrites(writes) { this.#writes = writes; }
@@ -227,6 +233,41 @@ export class RivuletClient extends Emitter {
 
   /** Tell the engine the device is back online, short-circuiting backoff. */
   resume() { this.#engine?.resume(); }
+
+  /**
+   * Listen for sync engine status changes ('offline', 'connecting', 'syncing', 'live', 'unauthorised').
+   * Immediately calls fn with the current status.
+   * @param {(status: string, event: object) => void} fn
+   * @returns {() => void} unsubscribe
+   */
+  onStatus(fn) {
+    fn(this.status, { status: this.status, previous: null });
+    return this.on('status', (e) => fn(e.status, e));
+  }
+
+  /**
+   * Wait until the client sync engine enters the target status.
+   * @param {string} target
+   * @param {object} [opts]
+   * @param {number} [opts.timeoutMs]
+   * @returns {Promise<boolean>}
+   */
+  async waitForStatus(target, { timeoutMs = 5000 } = {}) {
+    if (this.status === target) return true;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        off();
+        reject(new Error(`Timed out waiting for status '${target}' (currently '${this.status}')`));
+      }, timeoutMs);
+      const off = this.on('status', (e) => {
+        if (e.status === target) {
+          clearTimeout(timer);
+          off();
+          resolve(true);
+        }
+      });
+    });
+  }
 
   /** Operations written locally but not yet acknowledged by the server. */
   async pendingCount() {

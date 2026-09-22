@@ -115,3 +115,21 @@ test('RivuletClient flush, pendingCount, stats and closing', async () => {
   assert.throws(() => client.mutate((tx) => tx.create('notes', { title: 'fails' })), ValidationError);
 });
 
+test('RivuletClient onStatus and waitForStatus report status lifecycle', async () => {
+  const client = await RivuletClient.open({
+    schema: notebookSchema,
+    room: 'status-room',
+    storage: new MemoryAdapter({ name: 'status-mem' }),
+  });
+
+  const seen = [];
+  const unsubscribe = client.onStatus((status) => seen.push(status));
+  assert.deepEqual(seen, [Status.OFFLINE]);
+
+  assert.equal(await client.waitForStatus(Status.OFFLINE), true);
+
+  unsubscribe();
+  await client.close();
+});
+
+
