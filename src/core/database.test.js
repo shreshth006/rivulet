@@ -386,3 +386,11 @@ test('query list supports string and object sorting specs', () => {
   const byReadsDesc = db.list('notes', { sort: { reads: -1 } });
   assert.deepEqual(byReadsDesc.map((n) => n.reads), [30, 20, 10]);
 });
+
+test('Database exposes schema and schemaFingerprint accessors', () => {
+  const db = makeDb('a');
+  assert.equal(db.schema, notebookSchema);
+  assert.equal(db.schemaFingerprint, notebookSchema.fingerprint);
+  assert.equal(typeof db.schemaFingerprint, 'string');
+});
+

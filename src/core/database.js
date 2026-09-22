@@ -112,6 +112,7 @@ export class Database extends Emitter {
   }
 
   get schema() { return this.#schema; }
+  get schemaFingerprint() { return this.#schema.fingerprint; }
   get node() { return this.#clock.node; }
   get clock() { return this.#clock; }
   get seq() { return this.#factory.seq; }
