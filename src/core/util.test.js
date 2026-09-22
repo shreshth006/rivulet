@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toHex, randomHex, makeRng, randInt, pick, shuffled,
-  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep,
+  stableStringify, deepEqual, fnv1a, digest, backoffDelay, chunk, bisect, Emitter, cloneDeep, LruCache,
 } from '#core/util';
 import { ValidationError } from '#core/errors';
 
@@ -167,4 +167,29 @@ test('cloneDeep creates independent deep copies of complex structures', () => {
 
   copy.map.get('k1').v = 99;
   assert.equal(original.map.get('k1').v, 1);
+});
+
+test('LruCache enforces capacity and maintains recency order', () => {
+  const cache = new LruCache(3);
+  cache.set('a', 1);
+  cache.set('b', 2);
+  cache.set('c', 3);
+
+  assert.equal(cache.size, 3);
+  assert.equal(cache.get('a'), 1); // Access 'a' to make it most recently used
+
+  cache.set('d', 4); // Evicts 'b' (oldest), not 'a'
+  assert.equal(cache.has('b'), false);
+  assert.equal(cache.get('a'), 1);
+  assert.equal(cache.get('c'), 3);
+  assert.equal(cache.get('d'), 4);
+
+  cache.delete('c');
+  assert.equal(cache.has('c'), false);
+  assert.equal(cache.size, 2);
+
+  cache.clear();
+  assert.equal(cache.size, 0);
+
+  assert.throws(() => new LruCache(0), ValidationError);
 });
