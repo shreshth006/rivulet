@@ -28,6 +28,35 @@ import { ValidationError } from '#core/errors';
 
 const SNAPSHOT_VERSION = 1;
 
+function matchField(actual, expected) {
+  if (expected && typeof expected === 'object' && !Array.isArray(expected) && !(expected instanceof RegExp)) {
+    for (const [op, target] of Object.entries(expected)) {
+      switch (op) {
+        case '$eq': if (actual !== target) return false; break;
+        case '$ne': if (actual === target) return false; break;
+        case '$gt': if (!(actual > target)) return false; break;
+        case '$gte': if (!(actual >= target)) return false; break;
+        case '$lt': if (!(actual < target)) return false; break;
+        case '$lte': if (!(actual <= target)) return false; break;
+        case '$in': if (!Array.isArray(target) || !target.includes(actual)) return false; break;
+        case '$nin': if (Array.isArray(target) && target.includes(actual)) return false; break;
+        case '$exists': if ((actual !== undefined && actual !== null) !== Boolean(target)) return false; break;
+        case '$regex': {
+          const re = target instanceof RegExp ? target : new RegExp(target);
+          if (!re.test(String(actual ?? ''))) return false;
+          break;
+        }
+        default: if (actual !== expected) return false;
+      }
+    }
+    return true;
+  }
+  if (expected instanceof RegExp) return expected.test(String(actual ?? ''));
+  if (Array.isArray(actual)) return actual.includes(expected);
+  if (actual instanceof Set) return actual.has(expected);
+  return actual === expected;
+}
+
 export class Database extends Emitter {
   #schema;
   #clock;
@@ -140,12 +169,7 @@ export class Database extends Emitter {
     const filterFn = typeof where === 'function'
       ? where
       : (typeof where === 'object' && where !== null)
-        ? (val) => Object.entries(where).every(([k, v]) => {
-            const actual = val[k];
-            if (Array.isArray(actual)) return actual.includes(v);
-            if (actual instanceof Set) return actual.has(v);
-            return actual === v;
-          })
+        ? (val) => Object.entries(where).every(([k, v]) => matchField(val[k], v))
         : null;
     let out = [];
     for (const doc of this.#collections.get(collection).values()) {

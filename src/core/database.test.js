@@ -314,3 +314,35 @@ test('find and list support function predicates and object filters', () => {
   const custom = db.find('notes', (doc) => doc.title.startsWith('Th'));
   assert.equal(custom?.id, id3);
 });
+
+test('query filters support comparison and logical operators', () => {
+  const db = makeDb('a');
+  const id1 = db.mutate((tx) => tx.create('notes', { title: 'Note A', reads: 10, pinned: true })).result;
+  const id2 = db.mutate((tx) => tx.create('notes', { title: 'Note B', reads: 25, pinned: false })).result;
+  const id3 = db.mutate((tx) => tx.create('notes', { title: 'Note C', reads: 50, pinned: true })).result;
+
+  // $gt and $lt
+  const mid = db.list('notes', { where: { reads: { $gt: 10, $lt: 50 } } });
+  assert.equal(mid.length, 1);
+  assert.equal(mid[0].id, id2);
+
+  // $gte and $lte
+  const allExceptOne = db.list('notes', { where: { reads: { $gte: 25 } } });
+  assert.equal(allExceptOne.length, 2);
+
+  // $ne
+  const notA = db.list('notes', { where: { title: { $ne: 'Note A' } } });
+  assert.equal(notA.length, 2);
+
+  // $in and $nin
+  const inList = db.list('notes', { where: { reads: { $in: [10, 50] } } });
+  assert.equal(inList.length, 2);
+
+  const notInList = db.list('notes', { where: { reads: { $nin: [10, 50] } } });
+  assert.equal(notInList.length, 1);
+  assert.equal(notInList[0].id, id2);
+
+  // $regex
+  const matchesRegex = db.list('notes', { where: { title: { $regex: /^Note [BC]$/ } } });
+  assert.equal(matchesRegex.length, 2);
+});
