@@ -58,6 +58,11 @@ export class AuthError extends RivuletError {
   constructor(message, details) { super('E_AUTH', message, details); }
 }
 
+/** Resource ceiling or quota exceeded (e.g. maximum rooms reached). */
+export class LimitError extends RivuletError {
+  constructor(message, details) { super('E_LIMIT', message, details); }
+}
+
 /** @param {unknown} cond @param {string} msg @param {Record<string,unknown>} [details] */
 export function invariant(cond, msg, details) {
   if (!cond) throw new ValidationError(msg, details);
