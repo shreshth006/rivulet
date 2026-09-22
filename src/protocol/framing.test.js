@@ -71,11 +71,17 @@ test('the byte meter reports what a session actually cost', async () => {
   const s = meter.summary;
   assert.equal(s.sentFrames, 1);
   assert.equal(s.recvFrames, 1);
+  assert.equal(s.totalFrames, 2);
   assert.ok(s.totalWire < s.sentRaw + s.recvRaw);
   assert.ok(s.compressionRatio < 0.2);
+  assert.ok(s.savedBytes > 0);
+  assert.equal(s.savedBytes, meter.savedBytes);
+  assert.ok(s.savedPercentage > 75);
   meter.reset();
   assert.equal(meter.summary.totalWire, 0);
+  assert.equal(meter.savedBytes, 0);
 });
+
 
 test('messages carry their protocol version and validate', () => {
   const h = hello({ node: NODE, room: 'r1', schema: 'fp', compression: [Encoding.DEFLATE] });

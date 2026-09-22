@@ -91,13 +91,26 @@ export class ByteMeter {
     this.recvFrames++; this.recvRaw += rawBytes; this.recvWire += wireBytes;
   }
 
+  get totalFrames() { return this.sentFrames + this.recvFrames; }
+  get totalRaw() { return this.sentRaw + this.recvRaw; }
+  get totalWire() { return this.sentWire + this.recvWire; }
+  get savedBytes() { return Math.max(0, this.totalRaw - this.totalWire); }
+
   get summary() {
-    const ratio = (wire, raw) => (raw === 0 ? 1 : wire / raw);
+    const raw = this.totalRaw;
+    const wire = this.totalWire;
+    const ratio = raw === 0 ? 1 : wire / raw;
+    const saved = Math.max(0, raw - wire);
+    const savedPct = raw === 0 ? 0 : Math.round((saved / raw) * 10000) / 100;
     return {
       sentFrames: this.sentFrames, sentWire: this.sentWire, sentRaw: this.sentRaw,
       recvFrames: this.recvFrames, recvWire: this.recvWire, recvRaw: this.recvRaw,
-      totalWire: this.sentWire + this.recvWire,
-      compressionRatio: ratio(this.sentWire + this.recvWire, this.sentRaw + this.recvRaw),
+      totalFrames: this.totalFrames,
+      totalRaw: raw,
+      totalWire: wire,
+      savedBytes: saved,
+      savedPercentage: savedPct,
+      compressionRatio: ratio,
     };
   }
 
@@ -106,3 +119,4 @@ export class ByteMeter {
     this.recvFrames = this.recvRaw = this.recvWire = 0;
   }
 }
+
