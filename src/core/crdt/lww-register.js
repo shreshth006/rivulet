@@ -26,6 +26,8 @@ export class LWWRegister {
 
   get value() { return this.#value; }
   get timestamp() { return this.#ts; }
+  get hasValue() { return this.#value !== null && this.#value !== undefined; }
+  get isInitialized() { return this.#ts !== ZERO_TIMESTAMP; }
 
   /** Payload for a write. The HLC timestamp travels in the op envelope. */
   static op(value) { return { v: value }; }
