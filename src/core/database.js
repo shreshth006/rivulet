@@ -163,8 +163,9 @@ export class Database extends Emitter {
    * @param {(a: any, b: any) => number} [opts.sort]
    * @param {number} [opts.limit]
    * @param {number} [opts.offset]
+   * @param {string[]} [opts.select] fields to project
    */
-  list(collection, { includeDeleted = false, where, sort, limit, offset = 0 } = {}) {
+  list(collection, { includeDeleted = false, where, sort, limit, offset = 0, select } = {}) {
     this.#schema.collection(collection);
     const filterFn = typeof where === 'function'
       ? where
@@ -175,7 +176,15 @@ export class Database extends Emitter {
     for (const doc of this.#collections.get(collection).values()) {
       if (doc.deleted && !includeDeleted) continue;
       const value = doc.value({ includeDeleted });
-      if (value && (!filterFn || filterFn(value, doc))) out.push(value);
+      if (value && (!filterFn || filterFn(value, doc))) {
+        if (select && Array.isArray(select) && select.length) {
+          const projected = { id: value.id };
+          for (const k of select) if (k in value) projected[k] = value[k];
+          out.push(projected);
+        } else {
+          out.push(value);
+        }
+      }
     }
     if (sort) out.sort(sort);
     if (offset) out = out.slice(offset);

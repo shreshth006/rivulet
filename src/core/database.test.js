@@ -346,3 +346,21 @@ test('query filters support comparison and logical operators', () => {
   const matchesRegex = db.list('notes', { where: { title: { $regex: /^Note [BC]$/ } } });
   assert.equal(matchesRegex.length, 2);
 });
+
+test('query supports field projection with select option', () => {
+  const db = makeDb('a');
+  const id = db.mutate((tx) => tx.create('notes', {
+    title: 'Projected Note', body: 'Very long text content that we may not need', tags: ['infra'], reads: 42,
+  })).result;
+
+  const projected = db.find('notes', { id }, { select: ['title', 'reads'] });
+  assert.equal(projected.id, id);
+  assert.equal(projected.title, 'Projected Note');
+  assert.equal(projected.reads, 42);
+  assert.equal(projected.body, undefined);
+  assert.equal(projected.tags, undefined);
+
+  const listProjected = db.list('notes', { select: ['title'] });
+  assert.equal(listProjected.length, 1);
+  assert.deepEqual(listProjected[0], { id, title: 'Projected Note' });
+});
