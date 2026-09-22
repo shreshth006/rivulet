@@ -119,7 +119,8 @@ record never contend at all.
   `(node, seq)`, so the CRDTs need only be commutative -- and a retry after a
   lost response costs a duplicate transfer and nothing else.
 
-Further reading: [architecture](docs/01-architecture.md) ·
+Further reading: **[how it works, end to end](docs/00-how-it-works.md)** ·
+[architecture](docs/01-architecture.md) ·
 [CRDT design](docs/02-crdt-design.md) ·
 [sync protocol](docs/03-sync-protocol.md) ·
 [storage](docs/04-storage.md) ·
