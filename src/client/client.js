@@ -174,6 +174,8 @@ export class RivuletClient extends Emitter {
   get online() { return this.#engine?.online ?? false; }
 
   get(collection, id, opts) { return this.#db.get(collection, id, opts); }
+  exists(collection, id) { return this.#db.exists(collection, id); }
+  find(collection, where, opts) { return this.#db.find(collection, where, opts); }
   list(collection, opts) { return this.#db.list(collection, opts); }
   count(collection, opts) { return this.#db.count(collection, opts); }
   conflicts(collection) { return this.#db.conflicts(collection); }

@@ -130,23 +130,45 @@ export class Database extends Emitter {
    * @param {string} collection
    * @param {object} [opts]
    * @param {boolean} [opts.includeDeleted]
-   * @param {(value: any, doc: Document) => boolean} [opts.where]
+   * @param {((value: any, doc: Document) => boolean)|Record<string, any>} [opts.where]
    * @param {(a: any, b: any) => number} [opts.sort]
    * @param {number} [opts.limit]
    * @param {number} [opts.offset]
    */
   list(collection, { includeDeleted = false, where, sort, limit, offset = 0 } = {}) {
     this.#schema.collection(collection);
+    const filterFn = typeof where === 'function'
+      ? where
+      : (typeof where === 'object' && where !== null)
+        ? (val) => Object.entries(where).every(([k, v]) => {
+            const actual = val[k];
+            if (Array.isArray(actual)) return actual.includes(v);
+            if (actual instanceof Set) return actual.has(v);
+            return actual === v;
+          })
+        : null;
     let out = [];
     for (const doc of this.#collections.get(collection).values()) {
       if (doc.deleted && !includeDeleted) continue;
       const value = doc.value({ includeDeleted });
-      if (value && (!where || where(value, doc))) out.push(value);
+      if (value && (!filterFn || filterFn(value, doc))) out.push(value);
     }
     if (sort) out.sort(sort);
     if (offset) out = out.slice(offset);
     if (limit !== undefined) out = out.slice(0, limit);
     return out;
+  }
+
+  /**
+   * Find the first document matching `where`.
+   * @param {string} collection
+   * @param {((value: any, doc: Document) => boolean)|Record<string, any>} where
+   * @param {object} [opts]
+   * @returns {Record<string,any>|null}
+   */
+  find(collection, where, opts = {}) {
+    const results = this.list(collection, { ...opts, where, limit: 1 });
+    return results[0] ?? null;
   }
 
   /** Documents holding unresolved concurrent values, for a conflict-review UI. */

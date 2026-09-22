@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 222 tests, no dependencies
+npm test                                            # 230 tests, no dependencies
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
 

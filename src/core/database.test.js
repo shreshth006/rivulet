@@ -277,3 +277,40 @@ test('an untouched field reads the same as an emptied one, on every replica', ()
   assert.equal(a.get('notes', id).body, '');
   assert.deepEqual(a.get('notes', id), b.get('notes', id));
 });
+
+test('exists checks document presence and deletion status', () => {
+  const db = makeDb('a');
+  assert.equal(db.exists('notes', 'missing'), false);
+
+  const id = db.mutate((tx) => tx.create('notes', { title: 'check' })).result;
+  assert.equal(db.exists('notes', id), true);
+
+  db.mutate((tx) => tx.delete('notes', id));
+  assert.equal(db.exists('notes', id), false);
+
+  db.mutate((tx) => tx.restore('notes', id));
+  assert.equal(db.exists('notes', id), true);
+});
+
+test('find and list support function predicates and object filters', () => {
+  const db = makeDb('a');
+  const id1 = db.mutate((tx) => tx.create('notes', { title: 'First', tags: ['infra', 'urgent'], pinned: true })).result;
+  const id2 = db.mutate((tx) => tx.create('notes', { title: 'Second', tags: ['infra'], pinned: false })).result;
+  const id3 = db.mutate((tx) => tx.create('notes', { title: 'Third', tags: ['todo'], pinned: false })).result;
+
+  // Object filter matching primitive and array membership
+  assert.equal(db.find('notes', { title: 'Second' })?.id, id2);
+  assert.equal(db.find('notes', { tags: 'urgent' })?.id, id1);
+  assert.equal(db.find('notes', { title: 'Nonexistent' }), null);
+
+  const pinned = db.list('notes', { where: { pinned: true } });
+  assert.equal(pinned.length, 1);
+  assert.equal(pinned[0].id, id1);
+
+  const infra = db.list('notes', { where: { tags: 'infra' } });
+  assert.equal(infra.length, 2);
+
+  // Function predicate
+  const custom = db.find('notes', (doc) => doc.title.startsWith('Th'));
+  assert.equal(custom?.id, id3);
+});
