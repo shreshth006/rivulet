@@ -99,6 +99,24 @@ test('MVRegister surfaces concurrent writes and collapses once one is seen', () 
   assert.deepEqual(b.crdt.values, ['resolved']);
 });
 
+test('MVRegister size, isEmpty and hasValue reflect conflict state', () => {
+  const reg = new MVRegister();
+  assert.equal(reg.isEmpty, true);
+  assert.equal(reg.size, 0);
+  assert.equal(reg.hasValue('x'), false);
+
+  const [a, b] = replicas(2, () => new MVRegister());
+  const wa = a.emit((c) => c.op('first'));
+  const wb = b.emit((c) => c.op('second'));
+  a.receive(wb);
+
+  assert.equal(a.crdt.size, 2);
+  assert.equal(a.crdt.isEmpty, false);
+  assert.equal(a.crdt.hasValue('first'), true);
+  assert.equal(a.crdt.hasValue('second'), true);
+  assert.equal(a.crdt.hasValue('third'), false);
+});
+
 test('PNCounter adds concurrent increments instead of overwriting', () => {
   const [a, b, c] = replicas(3, () => new PNCounter());
   const oa = a.emit(() => PNCounter.op(1));
