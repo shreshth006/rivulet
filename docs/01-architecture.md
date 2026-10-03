@@ -85,6 +85,11 @@ choice pays for itself repeatedly:
 | Clocks can be wrong | Hybrid logical clocks | `src/core/hlc.js` |
 | Restart is safe | Persisted identity, seq and clock | `RivuletClient.open` |
 
+> **Note on isolation:** The in-memory materialised view is kept strictly separate
+> from durable operation append. Mutation transactions stage and commit operations
+> into the local log before updating the in-memory document state, ensuring that an
+> unexpected termination or restart never leaves an unpersisted view.
+
 ## The layering that makes counters possible
 
 Worth stating explicitly, because it is the one place where a layer's
