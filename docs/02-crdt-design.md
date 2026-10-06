@@ -128,7 +128,9 @@ flat comparison skips the whole subtree at once.
 placed, so it waits in a pending table keyed by that neighbour and replays —
 transitively — the moment it shows up. This is the only type needing causal
 context, and it resolves that itself, so the sync layer never has to enforce
-causal delivery.
+causal delivery. Because the HLC timestamp embeds the unique replica identity,
+sibling inserts at the exact same logical tick break ties deterministically,
+producing identical character sequences across all peers.
 
 ## Tombstones and collection
 
