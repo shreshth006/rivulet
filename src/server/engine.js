@@ -87,6 +87,10 @@ export class SyncServer extends Emitter {
    * @param {(room: string) => Promise<object>} opts.storage adapter factory, one per room
    * @param {string} [opts.schema] schema fingerprint clients must match
    * @param {(ctx: object) => (boolean|Promise<boolean>)} [opts.authorize]
+   *   called before every room access with `{ action, room, node, writes,
+   *   credential, ip }`; `action` is 'hello', 'sync', 'subscribe' or
+   *   'inspect'. Return false or throw an AuthError to refuse. See
+   *   `roomTokens` in `#server/tokens` for a ready-made one.
    * @param {object} [opts.limits]
    * @param {string} [opts.node] fixed server id (tests); otherwise minted
    * @param {{encode: Function, decode: Function}} [opts.codec] operation batch
@@ -159,7 +163,8 @@ export class SyncServer extends Emitter {
     return opening;
   }
 
-  async #authorized(ctx) {
+  /** Throw unless the configured hook allows this access. */
+  async authorize(ctx) {
     if (!(await this.#authorize(ctx))) {
       throw new AuthError('not authorised for this room', { room: ctx.room });
     }
@@ -170,7 +175,7 @@ export class SyncServer extends Emitter {
   /** Capability negotiation and an early schema check. */
   async handleHello(msg, ctx = {}) {
     validateMessage(msg, MessageType.HELLO);
-    await this.#authorized({ ...ctx, room: msg.room, node: msg.node });
+    await this.authorize({ ...ctx, action: 'hello', room: msg.room, node: msg.node, writes: false });
     assertSchemaMatch(this.#schema ?? msg.schema, msg.schema);
 
     const room = await this.room(msg.room);
@@ -195,7 +200,10 @@ export class SyncServer extends Emitter {
    */
   async handleSync(msg, ctx = {}) {
     validateMessage(msg, MessageType.SYNC);
-    await this.#authorized({ ...ctx, room: msg.room, node: msg.node });
+    // A request carrying operations is a write; one that only pulls is a read,
+    // so a read-only credential can still follow a room.
+    const writes = Boolean(msg.push && (msg.push.n ?? 1) > 0);
+    await this.authorize({ ...ctx, action: 'sync', room: msg.room, node: msg.node, writes });
     assertSchemaMatch(this.#schema ?? msg.schema, msg.schema);
 
     const room = await this.room(msg.room);
@@ -275,7 +283,8 @@ export class SyncServer extends Emitter {
    * Returning the current frontier lets a client that just connected decide
    * whether it needs a catch-up sync before trusting the stream.
    */
-  async subscribe(roomName, listener, { node } = {}) {
+  async subscribe(roomName, listener, { node, ...ctx } = {}) {
+    await this.authorize({ ...ctx, action: 'subscribe', room: roomName, node, writes: false });
     const room = await this.room(roomName);
     if (node) listener.node = node;
     const off = room.subscribe(listener);

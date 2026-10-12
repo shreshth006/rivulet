@@ -21,6 +21,7 @@ export { defaultAdapter, MemoryAdapter, IndexedDbAdapter, OpLog } from '#storage
 // Running a server.
 export { SyncServer } from '#server/engine';
 export { HttpSyncServer, startServer } from '#server/http';
+export { issueRoomToken, verifyRoomToken, roomTokens } from '#server/tokens';
 
 // Errors, for branching on `code` rather than on message text.
 export {

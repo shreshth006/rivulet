@@ -104,12 +104,31 @@ const server = await startServer({
   port: 8787,
   dataDir: './data',        // one SQLite file per room
   schema: schema.fingerprint,  // pin it, so version skew is a clear error
-  token: process.env.SYNC_TOKEN,
+  secret: process.env.RIVULET_SECRET,  // room-scoped tokens; or `token` for one shared token
 });
 ```
 
+Issue a token for each user and room, from whatever already authenticates them,
+and hand it to the client's transport:
+
+```js
+import { issueRoomToken } from './src/index.js';
+
+const token = issueRoomToken(secret, {
+  room: 'notebook',      // or 'team-42/*', or '*'
+  scope: 'write',        // 'read' | 'write' | 'admin'
+  node: replicaId,       // optional: only this replica may use it
+  ttlSeconds: 86_400,    // optional
+});
+new HttpTransport({ url, room: 'notebook', node: replicaId, token });
+```
+
+For any other policy, pass `authorize(ctx)` to `startServer` or `SyncServer`.
+It sees `{ action, room, node, writes, credential, ip }` and may return false or
+throw an `AuthError`.
+
 Endpoints: `POST /v1/sync`, `GET /v1/stream` (SSE), `GET /v1/health`,
-`GET /v1/stats`.
+`GET /v1/info`, and, with admin access, `GET /v1/room` and `GET /v1/stats`.
 
 Or use the CLI:
 

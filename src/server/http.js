@@ -20,6 +20,7 @@
  */
 
 import { createServer } from 'node:http';
+import { timingSafeEqual } from 'node:crypto';
 import { readFile, stat } from 'node:fs/promises';
 import { join, extname, normalize, resolve, sep } from 'node:path';
 import { SyncServer } from '#server/engine';
@@ -27,6 +28,7 @@ import { unpackMessage, packMessage, Encoding } from '#protocol/framing';
 import { MessageType, PROTOCOL_VERSION } from '#protocol/messages';
 import { CODEC_VERSION } from '#protocol/codec';
 import { AuthError, ProtocolError } from '#core/errors';
+import { roomTokens } from '#server/tokens';
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -72,7 +74,9 @@ export class HttpSyncServer {
    * @param {string} [opts.staticDir] serve a directory at `/`
    * @param {Record<string, string>} [opts.mounts] URL prefix -> directory,
    *   for serving the engine's own modules alongside a demo page
-   * @param {string} [opts.token] bearer token required on every request
+   * @param {string} [opts.token] one bearer token required on every request,
+   *   for deployments that trust every client equally. For per-room access,
+   *   give the engine an `authorize` hook (e.g. `roomTokens`) instead.
    * @param {string[]} [opts.origins] allowed CORS origins; '*' by default
    * @param {number} [opts.heartbeatMs] SSE keep-alive interval
    */
@@ -150,10 +154,14 @@ export class HttpSyncServer {
       case 'GET /v1/room': {
         const room = url.searchParams.get('name');
         if (!room) return this.#json(res, 400, { error: 'room name is required' });
+        await this.#inspect(req, room);
         if (!this.#engine.hasRoom(room)) return this.#json(res, 404, { error: 'room not found' });
         return this.#json(res, 200, await this.#engine.roomStats(room));
       }
-      case 'GET /v1/stats': return this.#json(res, 200, await this.#engine.stats());
+      case 'GET /v1/stats':
+        // Lists every room, so it needs a credential covering all of them.
+        await this.#inspect(req, null);
+        return this.#json(res, 200, await this.#engine.stats());
       default:
         if (req.method === 'GET' && this.#opts.mounts.length) return this.#static(url, res);
         return this.#json(res, 404, { error: 'not found' });
@@ -170,11 +178,30 @@ export class HttpSyncServer {
     res.setHeader('vary', 'origin');
   }
 
+  /** The bearer credential, if any -- passed through to the engine's hook. */
+  #credential(req) {
+    const header = req.headers.authorization ?? '';
+    return header.startsWith('Bearer ') ? header.slice(7) : null;
+  }
+
+  /** The deployment-wide token, compared in constant time. */
   #authorise(req) {
     if (!this.#opts.token) return;
-    const header = req.headers.authorization ?? '';
-    const supplied = header.startsWith('Bearer ') ? header.slice(7) : null;
-    if (supplied !== this.#opts.token) throw new AuthError('missing or invalid bearer token');
+    const supplied = Buffer.from(this.#credential(req) ?? '');
+    const expected = Buffer.from(this.#opts.token);
+    if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+      throw new AuthError('missing or invalid bearer token');
+    }
+  }
+
+  #context(req) {
+    return { ip: req.socket.remoteAddress, credential: this.#credential(req) };
+  }
+
+  /** Operational endpoints reveal room names and sizes; gate them like sync. */
+  async #inspect(req, room) {
+    this.#authorise(req);
+    await this.#engine.authorize({ ...this.#context(req), action: 'inspect', room, writes: false });
   }
 
   /* ------------------------------------------------------------------ sync */
@@ -187,9 +214,10 @@ export class HttpSyncServer {
       ? Encoding.DEFLATE : Encoding.JSON;
     const message = await unpackMessage(body, encoding);
 
+    const ctx = this.#context(req);
     const reply = message.t === MessageType.HELLO
-      ? await this.#engine.handleHello(message, { ip: req.socket.remoteAddress })
-      : await this.#engine.handleSync(message, { ip: req.socket.remoteAddress });
+      ? await this.#engine.handleHello(message, ctx)
+      : await this.#engine.handleSync(message, ctx);
 
     // Compress the reply only if the client said it can decompress, and only
     // when it actually pays -- see `packMessage`.
@@ -211,6 +239,10 @@ export class HttpSyncServer {
     const room = url.searchParams.get('room');
     const node = url.searchParams.get('node') ?? undefined;
     if (!room) return this.#json(res, 400, { error: 'room is required' });
+    // Checked before the headers go out, so a refusal is a status code rather
+    // than a stream that opens and then dies.
+    const ctx = this.#context(req);
+    await this.#engine.authorize({ ...ctx, action: 'subscribe', room, node, writes: false });
 
     res.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -229,7 +261,7 @@ export class HttpSyncServer {
       res.write(`data: ${JSON.stringify({ t: 'event', n: ops.length, from })}\n\n`);
     };
 
-    const { off, have } = await this.#engine.subscribe(room, listener, { node });
+    const { off, have } = await this.#engine.subscribe(room, listener, { node, ...ctx });
     res.write(`data: ${JSON.stringify({ t: 'ready', have: have.toJSON() })}\n\n`);
 
     const cleanup = () => { off(); this.#streams.delete(res); };
@@ -296,7 +328,7 @@ export class HttpSyncServer {
  */
 export async function startServer({
   port = 8787, host = '127.0.0.1', dataDir = './data', schema,
-  token, staticDir, mounts, origins, memory = false,
+  token, secret, authorize, staticDir, mounts, origins, memory = false,
 } = {}) {
   const { SqliteAdapter } = await import('#storage/sqlite');
   const { MemoryAdapter } = await import('#storage/adapter');
@@ -305,6 +337,8 @@ export async function startServer({
 
   const engine = new SyncServer({
     schema,
+    // `secret` turns on room-scoped tokens; `authorize` is the general hook.
+    authorize: authorize ?? (secret ? roomTokens(secret) : undefined),
     // One database file per room: rooms stay isolated, and a room can be
     // backed up, moved or deleted without touching the others.
     storage: async (room) => (memory

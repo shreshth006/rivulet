@@ -176,8 +176,26 @@ the replica that sent them.** Accepting an operation labelled with another
 replica's id would let a client forge that replica's history, and forged
 sequence numbers would block the real ones from ever being accepted.
 
-Everything else is transport-level: a bearer token per deployment, bounded
-request bodies, and rooms isolated in separate databases.
+Everything else is transport-level: bounded request bodies, rooms isolated in
+separate databases, and an authorisation hook consulted before every room
+access — `hello`, `sync`, `subscribe`, and `inspect` for the operational
+endpoints — with the request's bearer credential and whether it writes.
 
-What is *not* here, stated plainly: no end-to-end encryption, no per-document
-authorisation, no per-user identity. The server sees plaintext operations.
+The bundled hook (`roomTokens` in `src/server/tokens.js`) accepts stateless
+HMAC-signed tokens naming a room (exactly, by prefix, or `*`) and a scope:
+
+| Scope | May |
+|---|---|
+| `read` | pull, subscribe |
+| `write` | also push operations |
+| `admin` | also `GET /v1/room`; with room `*`, `GET /v1/stats` |
+
+A token can also be bound to one replica id and given an expiry. A sync that
+carries operations counts as a write, so a read-only follower that writes
+anyway is refused outright and goes to `unauthorised` rather than silently
+diverging. The simpler single deployment token (`--token`) remains, and now
+also guards the operational endpoints.
+
+What is *not* here, stated plainly: no end-to-end encryption, no per-user
+identity beyond what the token issuer encodes, and no revocation short of
+expiry or rotating the secret. The server sees plaintext operations.

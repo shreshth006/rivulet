@@ -547,9 +547,10 @@ results rather than as design.
 - **Convergence is checked, not proven.** Property testing over many random
   schedules is strong evidence, not a proof. The types are standard with
   published correctness arguments; these implementations are not verified.
-- **Security is minimal.** A bearer token per deployment, operations constrained
-  to their sending replica, and nothing else. No end-to-end encryption, no
-  per-document authorisation. The server sees plaintext.
+- **Security is minimal.** Operations are constrained to their sending replica,
+  and access is controlled per room by signed, scoped tokens; there is no
+  end-to-end encryption, no per-user identity and no revocation short of
+  expiry. The server sees plaintext.
 - **Metadata is linear in replica count**, bounding practical sharing (§6.6).
   Compressed vector encodings or server-assigned sequence positions would
   extend that bound.

@@ -13,6 +13,21 @@
   version-1 snapshots already in storage continue to load.
 - `bench/scenarios/overhead.js` reports plain and compact snapshot sizes side by side.
 
+### Security
+
+- Room-scoped access tokens (`src/server/tokens.js`): stateless HMAC-SHA256
+  tokens naming a room, a room prefix or `*`, with `read`, `write` or `admin`
+  scope, optional replica binding and optional expiry. `issueRoomToken`,
+  `verifyRoomToken` and the `roomTokens(secret)` authorizer are exported.
+- The engine's `authorize` hook now receives `action`, `writes` and the bearer
+  `credential`, and is consulted for `/v1/stream` subscriptions and the
+  inspection endpoints as well as for sync.
+- `/v1/stats` and `/v1/room` are no longer open when auth is configured: they
+  require the deployment token, or an admin room token (`*` for stats).
+- The deployment token is compared in constant time.
+- CLI: `serve.js --room-tokens` (secret from `RIVULET_SECRET`) and
+  `npm run token` to issue tokens.
+
 ## 0.2.0
 
 Comprehensive query, reliability, diagnostic, and developer tooling enhancements.

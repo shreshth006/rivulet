@@ -5,6 +5,7 @@
  *   node --experimental-sqlite apps/cli/serve.js --demo
  *   node --experimental-sqlite apps/cli/serve.js --port 8080 --data ./data
  *   node --experimental-sqlite apps/cli/serve.js --token secret
+ *   RIVULET_SECRET=... node --experimental-sqlite apps/cli/serve.js --room-tokens
  */
 
 import { fileURLToPath } from 'node:url';
@@ -23,7 +24,9 @@ Options:
   --port <n>     port to listen on (default 8787)
   --host <addr>  address to bind (default 127.0.0.1)
   --data <dir>   where room databases live (default ./data)
-  --token <t>    require this bearer token
+  --token <t>    require this one bearer token for everything
+  --room-tokens  require a signed room token per request (see apps/cli/token.js);
+                 the signing secret is read from RIVULET_SECRET
   --demo         also serve the demo app at /
   --memory       keep everything in memory; nothing survives a restart
   --open-schema  accept any client schema instead of pinning the demo's
@@ -33,7 +36,7 @@ Options:
 function parseArgs(argv) {
   const opts = {
     port: 8787, host: '127.0.0.1', data: './data',
-    token: undefined, demo: false, memory: false, openSchema: false,
+    token: undefined, roomTokens: false, demo: false, memory: false, openSchema: false,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -41,6 +44,7 @@ function parseArgs(argv) {
       case '--host': opts.host = argv[++i]; break;
       case '--data': opts.data = argv[++i]; break;
       case '--token': opts.token = argv[++i]; break;
+      case '--room-tokens': opts.roomTokens = true; break;
       case '--demo': opts.demo = true; break;
       case '--memory': opts.memory = true; break;
       case '--open-schema': opts.openSchema = true; break;
@@ -53,6 +57,10 @@ function parseArgs(argv) {
 
 const opts = parseArgs(process.argv.slice(2));
 if (opts.help) { console.log(HELP); process.exit(0); }
+// The secret comes from the environment, not argv: arguments show up in `ps`.
+const secret = opts.roomTokens ? process.env.RIVULET_SECRET : undefined;
+if (opts.roomTokens && !secret) throw new Error('--room-tokens needs RIVULET_SECRET set');
+if (opts.roomTokens && opts.token) throw new Error('use --token or --room-tokens, not both');
 
 const server = await startServer({
   port: opts.port,
@@ -60,6 +68,7 @@ const server = await startServer({
   dataDir: opts.data,
   memory: opts.memory,
   token: opts.token,
+  secret,
   // Pinning the schema turns a client/server version skew into a clear error
   // at connect time instead of operations that silently do nothing.
   schema: opts.openSchema ? undefined : demoSchema.fingerprint,
@@ -71,7 +80,7 @@ const server = await startServer({
 const { port } = server.address;
 console.log(`rivulet sync server on http://${opts.host}:${port}`);
 console.log(`  storage   ${opts.memory ? 'in memory (not durable)' : resolve(opts.data)}`);
-console.log(`  auth      ${opts.token ? 'bearer token required' : 'open'}`);
+console.log(`  auth      ${secret ? 'room tokens required' : opts.token ? 'bearer token required' : 'open'}`);
 if (opts.demo) {
   console.log(`  demo      http://${opts.host}:${port}/`);
   console.log('\nOpen it in two windows to watch them sync.');

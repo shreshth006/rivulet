@@ -7,16 +7,30 @@ and no external state — rooms are independent, so the only horizontal scaling
 story is partitioning rooms across processes by name.
 
 ```bash
-node --experimental-sqlite apps/cli/serve.js \
-  --port 8787 --data /var/lib/rivulet --token "$SYNC_TOKEN"
+RIVULET_SECRET="$(cat /etc/rivulet/secret)" node --experimental-sqlite apps/cli/serve.js \
+  --port 8787 --data /var/lib/rivulet --room-tokens
 ```
+
+With `--room-tokens`, every request needs a token signed with that secret and
+scoped to its room. Your own backend issues them, after it has decided who the
+user is, with `issueRoomToken(secret, { room, scope, ttlSeconds })`. For
+operators there is a CLI:
+
+```bash
+RIVULET_SECRET=... npm run token -- --room notebook --scope read --ttl 86400
+RIVULET_SECRET=... npm run token -- --room '*' --scope admin   # for /v1/stats
+```
+
+The secret is read from the environment, never argv, because arguments are
+visible in `ps`. A small trusted deployment can use `--token "$SYNC_TOKEN"`
+instead: one shared token for everything.
 
 Put a TLS terminator in front of it. The server speaks plain HTTP and has no
 opinion about certificates.
 
 ## What to watch
 
-`GET /v1/stats` reports, per room: operation count, replica count, live
+`GET /v1/stats` (admin token for `*`, or the deployment token) reports, per room: operation count, replica count, live
 connections, stored bytes and last activity.
 
 The numbers that actually indicate trouble:
@@ -81,8 +95,9 @@ data stops converging. Treat a field's type as permanent once it has shipped.
 ## Rooms
 
 One SQLite file per room, named after it. A room can be backed up, moved or
-deleted independently. Room names are not secrets — anyone with the bearer token
-can access any room they can name.
+deleted independently. Room names are not secrets. Under a single deployment
+token, anyone holding it can access any room they can name; under room tokens,
+only the rooms their token covers.
 
 ## Things that will bite
 

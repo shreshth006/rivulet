@@ -8,12 +8,14 @@ import { MemoryAdapter } from '#storage/adapter';
 import { notebookSchema } from '../../test/helpers/fixtures.js';
 import { AuthError, TransportError } from '#core/errors';
 import { nodeIdFromLabel } from '#core/ids';
+import { issueRoomToken, roomTokens } from '#server/tokens';
 
 /** Start a real HTTP server on an ephemeral port. */
-async function serve({ token, schema = notebookSchema } = {}) {
+async function serve({ token, authorize, schema = notebookSchema } = {}) {
   const engine = new SyncServer({
     storage: async (room) => new MemoryAdapter({ name: room }),
     schema: schema.fingerprint,
+    authorize,
   });
   return new HttpSyncServer({ engine, token }).listen(0);
 }
@@ -132,6 +134,89 @@ test('an unauthorised client stops retrying instead of spinning', async (t) => {
   const node = nodeIdFromLabel('no-token');
   const transport = new HttpTransport({ url: server.url, room: 'http-room', node });
   await assert.rejects(() => transport.request({ t: 'sync', node, room: 'http-room', have: {} }), AuthError);
+});
+
+test('the deployment token also guards the inspection endpoints', async (t) => {
+  const server = await serve({ token: 'secret' });
+  t.after(() => server.close());
+  assert.equal((await fetch(`${server.url}/v1/stats`)).status, 403);
+  assert.equal((await fetch(`${server.url}/v1/room?name=x`)).status, 403);
+  const ok = await fetch(`${server.url}/v1/stats`, { headers: { authorization: 'Bearer secret' } });
+  assert.equal(ok.status, 200);
+  assert.equal((await fetch(`${server.url}/v1/health`)).status, 200, 'health stays open for probes');
+});
+
+const SECRET = 'http-test-secret-0123456789';
+const roomToken = (claims) => issueRoomToken(SECRET, claims);
+
+test('room tokens: a writer and a read-only follower share a room', async (t) => {
+  const server = await serve({ authorize: roomTokens(SECRET) });
+  t.after(() => server.close());
+
+  const writer = await connect(server, 'rt-writer', { token: roomToken({ room: 'http-room' }) });
+  const reader = await connect(server, 'rt-reader', { token: roomToken({ room: 'http-room', scope: 'read' }) });
+  t.after(() => Promise.all([writer.close(), reader.close()]));
+
+  const id = writer.mutate((tx) => tx.create('notes', { title: 'shared read-only' }));
+  await writer.syncUntilIdle();
+  await reader.syncUntilIdle();
+  assert.equal(reader.get('notes', id).title, 'shared read-only', 'a read token can pull');
+  assert.equal(reader.status, 'live');
+
+  // The follower writes anyway: the push is refused, and nothing reaches the room.
+  reader.mutate((tx) => tx.create('notes', { title: 'should not land' }));
+  await reader.sync().catch(() => {});
+  assert.equal(reader.status, 'unauthorised');
+  await writer.syncUntilIdle();
+  assert.equal(writer.list('notes').length, 1);
+});
+
+test('room tokens: other rooms, other replicas and expired tokens are refused', async (t) => {
+  const server = await serve({ authorize: roomTokens(SECRET) });
+  t.after(() => server.close());
+
+  const wrongRoom = await connect(server, 'rt-a', { token: roomToken({ room: 'elsewhere' }) });
+  const wrongNode = await connect(server, 'rt-b', { token: roomToken({ room: 'http-room', node: nodeIdFromLabel('rt-x') }) });
+  const expired = await connect(server, 'rt-c', { token: roomToken({ room: 'http-room', ttlSeconds: -1 }) });
+  const none = await connect(server, 'rt-d');
+  const prefixed = await connect(server, 'rt-e', { token: roomToken({ room: 'http-*' }) });
+  t.after(() => Promise.all([wrongRoom, wrongNode, expired, none, prefixed].map((c) => c.close())));
+
+  for (const client of [wrongRoom, wrongNode, expired, none]) {
+    await client.sync().catch(() => {});
+    assert.equal(client.status, 'unauthorised');
+  }
+  await prefixed.syncUntilIdle();
+  assert.equal(prefixed.status, 'live', 'a prefix pattern covers the room');
+});
+
+test('room tokens: the stream is refused before it opens', async (t) => {
+  const server = await serve({ authorize: roomTokens(SECRET) });
+  t.after(() => server.close());
+  const stream = (token) => fetch(`${server.url}/v1/stream?room=http-room`, {
+    headers: token ? { authorization: `Bearer ${token}` } : {},
+  });
+
+  assert.equal((await stream()).status, 403);
+  assert.equal((await stream(roomToken({ room: 'elsewhere' }))).status, 403);
+  const ok = await stream(roomToken({ room: 'http-room', scope: 'read' }));
+  assert.equal(ok.status, 200);
+  await ok.body.cancel();
+});
+
+test('room tokens: inspection needs admin scope, and stats needs it for every room', async (t) => {
+  const server = await serve({ authorize: roomTokens(SECRET) });
+  t.after(() => server.close());
+  const get = (path, token) => fetch(`${server.url}${path}`, { headers: { authorization: `Bearer ${token}` } });
+
+  const writer = await connect(server, 'rt-inspect', { token: roomToken({ room: 'http-room' }) });
+  t.after(() => writer.close());
+  await writer.sync();
+
+  assert.equal((await get('/v1/room?name=http-room', roomToken({ room: 'http-room' }))).status, 403);
+  assert.equal((await get('/v1/room?name=http-room', roomToken({ room: 'http-room', scope: 'admin' }))).status, 200);
+  assert.equal((await get('/v1/stats', roomToken({ room: 'http-room', scope: 'admin' }))).status, 403);
+  assert.equal((await get('/v1/stats', roomToken({ room: '*', scope: 'admin' }))).status, 200);
 });
 
 test('health and stats report the server state', async (t) => {

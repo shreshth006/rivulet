@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 264 tests, no dependencies
+npm test                                            # 275 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -201,8 +201,10 @@ Stated plainly, because they bound where this is the right tool:
   1.29–1.71× of the best fixed size without being told which network it is on,
   while the worst plausible fixed choice is 2.2–286× off. If you know your
   network, hard-code the number.
-- **No end-to-end encryption, and no per-document authorisation.** The server
-  sees plaintext operations, and auth is a single bearer token per deployment.
+- **No end-to-end encryption.** The server sees plaintext operations. Access is
+  controlled per room with signed, scoped tokens (read, write or admin), but
+  there is no per-user identity beyond what the token issuer encodes, and no
+  revocation short of expiry or rotating the secret.
 - **Text merging is character-level, not intent-level.** Two people rewriting
   the same sentence get a correct merge that may still read badly. No CRDT
   fixes that; it is why `mv` exists.
@@ -230,7 +232,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (264 tests)
+npm test              # everything (275 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

@@ -22,6 +22,7 @@
     "test:core": "node --test --experimental-sqlite \"src/core/**/*.test.js\"",
     "test:fuzz": "node --test --experimental-sqlite test/fuzz.test.js",
     "serve": "node --experimental-sqlite apps/cli/serve.js",
+    "token": "node apps/cli/token.js",
     "demo": "node --experimental-sqlite apps/cli/serve.js --demo",
     "bench": "node --experimental-sqlite bench/run.js",
     "bench:all": "node --experimental-sqlite bench/run.js --all --out bench/results",
