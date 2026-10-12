@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Demo
+
+- "New encrypted room" starts an end-to-end encrypted room whose name and key
+  live in the link's `#fragment`, which browsers never send to the server; a
+  lock badge and "Copy invite link" replace the button inside one. Needs a
+  secure context (https or localhost) and says so otherwise.
+
 ### Fixes
 
 - `OpLog.append` now de-duplicates within a batch as well as against storage.

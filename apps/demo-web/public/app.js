@@ -19,6 +19,7 @@
 import { RivuletClient, Status } from '#client/client';
 import { HttpTransport } from '#client/transport';
 import { defaultAdapter } from '#storage/index';
+import { generateRoomKey } from '#protocol/seal';
 import { demoSchema, DEMO_ROOM } from '/schema.js';
 
 const $ = (id) => document.getElementById(id);
@@ -36,19 +37,47 @@ const gatedFetch = (...args) => {
   return fetch(...args);
 };
 
+/* -------------------------------------------------------- encrypted rooms */
+
+/**
+ * An encrypted room lives entirely in the link: `#room=<name>&key=<key>`. The
+ * fragment is never sent to the server, so sharing the link shares the key
+ * with the people you send it to and with nobody else -- the server stores the
+ * room's operations without ever being able to read them.
+ */
+const fragment = new URLSearchParams(location.hash.slice(1));
+const roomKey = fragment.get('key');
+const room = roomKey ? fragment.get('room') : DEMO_ROOM;
+const canEncrypt = Boolean(globalThis.crypto?.subtle);
+
+function newEncryptedRoom() {
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('');
+  location.hash = new URLSearchParams({ room: `sealed-${id}`, key: generateRoomKey() }).toString();
+  location.reload();
+}
+
 /* ------------------------------------------------------------------- client */
+
+if (roomKey && (!room || !canEncrypt)) {
+  // WebCrypto needs a secure context: https, or localhost.
+  document.body.textContent = !room
+    ? 'This invite link is missing its room name.'
+    : 'Encrypted rooms need a secure context: open this over https or on localhost.';
+  throw new Error('cannot open the encrypted room');
+}
 
 const client = await RivuletClient.open({
   schema: demoSchema,
-  room: DEMO_ROOM,
+  room,
   // IndexedDB on a browser, so edits survive a reload and a closed laptop.
-  storage: await defaultAdapter({ name: `rivulet-${DEMO_ROOM}` }),
+  storage: await defaultAdapter({ name: `rivulet-${room}` }),
   // A factory, because the replica id is restored from storage during open --
   // it does not exist yet at this point in the file.
   transport: (node) => new HttpTransport({
-    url: location.origin, room: DEMO_ROOM, node, fetch: gatedFetch,
+    url: location.origin, room, node, fetch: gatedFetch,
   }),
   sync: { pollMs: 10_000, debounceMs: 250 },
+  ...(roomKey ? { encryption: { key: roomKey } } : {}),
 });
 
 /* --------------------------------------------------------------------- state */
@@ -180,7 +209,7 @@ function renderStatus() {
   $('status-text').textContent = simulatedOffline ? 'offline (simulated)'
     : status === Status.LIVE ? 'synced'
       : status === Status.SYNCING ? 'syncing…'
-        : status === Status.UNAUTHORISED ? 'not authorised'
+        : status === Status.UNAUTHORISED ? (roomKey ? 'cannot decrypt: wrong room key?' : 'not authorised')
           : 'offline — edits are saved locally';
 
   $('offline-toggle').textContent = simulatedOffline ? 'Go online' : 'Go offline';
@@ -245,6 +274,22 @@ $('estimate').onchange = (ev) => {
   const value = ev.target.value === '' ? null : Number(ev.target.value);
   client.mutate((tx) => tx.set('notes', selectedId, 'estimate', value));
 };
+
+// Encrypted rooms: start one, or invite people to the one you are in.
+const roomButton = $('room-button');
+if (roomKey) {
+  $('room-badge').hidden = false;
+  roomButton.textContent = 'Copy invite link';
+  roomButton.onclick = async () => {
+    await navigator.clipboard?.writeText(location.href).catch(() => {});
+    roomButton.textContent = 'Link copied';
+    setTimeout(() => { roomButton.textContent = 'Copy invite link'; }, 1500);
+  };
+} else if (canEncrypt) {
+  roomButton.onclick = newEncryptedRoom;
+} else {
+  roomButton.hidden = true;
+}
 
 $('offline-toggle').onclick = () => {
   simulatedOffline = !simulatedOffline;

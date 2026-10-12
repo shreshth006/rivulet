@@ -32,6 +32,8 @@
     <span class="dot" id="dot"></span>
     <span id="status-text">starting…</span>
     <button id="offline-toggle" class="ghost">Go offline</button>
+    <span class="badge" id="room-badge" hidden title="The server stores this room's operations but cannot read them">🔒 end-to-end encrypted</span>
+    <button id="room-button" class="ghost">New encrypted room</button>
   </div>
 </header>
 
@@ -40,6 +42,12 @@
     <strong>Try this:</strong> open this page in two windows side by side.
     Click <em>Go offline</em> in one, edit the same note in both, then come
     back online. Nothing is lost and no dialog asks you to choose.
+  </p>
+  <p>
+    <strong>Or:</strong> start a <em>new encrypted room</em> and send its link.
+    The key travels in the part of the link after <code>#</code>, which browsers
+    never send to the server, so the server syncs the room without being able
+    to read a word of it.
   </p>
 </section>
 
