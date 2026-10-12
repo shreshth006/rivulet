@@ -84,9 +84,14 @@ export class OpLog extends Emitter {
     if (ops.length === 0) return { added: 0, fresh: [], duplicates: 0 };
 
     const fresh = [];
+    // Duplicates *within* the batch count too: an operation listed twice must
+    // reach the CRDTs once, or a counter increment lands twice.
+    const seen = new Set();
     for (const op of ops) {
-      const held = this.#ranges.get(op.node);
-      if (!held?.has(op.seq)) fresh.push(op);
+      const key = `${op.node}:${op.seq}`;
+      if (this.#ranges.get(op.node)?.has(op.seq) || seen.has(key)) continue;
+      seen.add(key);
+      fresh.push(op);
     }
     if (fresh.length === 0) return { added: 0, fresh: [], duplicates: ops.length };
 

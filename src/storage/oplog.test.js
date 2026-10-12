@@ -58,6 +58,20 @@ test('the fresh set is what makes non-idempotent CRDTs safe', async () => {
   assert.equal(replica.get('notes', id).reads, 5, 'a resend must not double-count');
 });
 
+test('an operation listed twice in one batch is applied once', async () => {
+  const db = makeDb('a');
+  const { ops: created, result: id } = db.mutate((tx) => tx.create('notes', { title: 'counted' }));
+  const { ops } = db.mutate((tx) => tx.increment('notes', id, 'reads', 5));
+
+  // Two overlapping runs opened from one pull deliver the same operations twice.
+  const replica = makeDb('b');
+  const log = await openLog();
+  const { fresh, duplicates } = await log.append([...created, ...ops, ...ops]);
+  replica.applyAll(fresh);
+  assert.equal(replica.get('notes', id).reads, 5);
+  assert.equal(duplicates, ops.length);
+});
+
 test('the frontier advances only across contiguous sequences', async () => {
   const log = await openLog();
   const { db, ops } = sample('a', 12);

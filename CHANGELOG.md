@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixes
+
+- `OpLog.append` now de-duplicates within a batch as well as against storage.
+  A batch listing the same operation twice used to apply it twice, so a
+  counter increment could land double. Found by a randomized stress test of
+  encrypted rooms, where overlapping sealed runs deliver exactly such a batch.
+
 ### Storage & Compaction
 
 - Compact snapshot format (version 2, `src/core/snapshot.js`). Structural
