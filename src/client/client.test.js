@@ -141,7 +141,7 @@ test('RivuletClient snapshot, loadSnapshot and gc methods', async () => {
 
   clientA.mutate((tx) => tx.create('notes', { title: 'Snapshot note' }));
   const snap = clientA.snapshot();
-  assert.equal(snap.v, 1);
+  assert.equal(snap.v, 2);
   assert.equal(typeof snap.collections.notes, 'object');
 
   const clientB = await RivuletClient.open({

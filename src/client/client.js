@@ -217,9 +217,12 @@ export class RivuletClient extends Emitter {
     return this.#db.mutate(fn).result;
   }
 
-  /** Produce a portable point-in-time snapshot of the current state. */
-  snapshot() {
-    return this.#db.snapshot();
+  /**
+   * Produce a portable point-in-time snapshot of the current state.
+   * @param {{ compact?: boolean }} [opts] see `Database#snapshot`
+   */
+  snapshot(opts) {
+    return this.#db.snapshot(opts);
   }
 
   /**

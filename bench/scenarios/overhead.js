@@ -102,6 +102,7 @@ export async function run({ seed = 7, sizes = [50, 200, 800, 2000] } = {}) {
     const { revisions, rga, db, id } = c;
     const beforeBytes = jsonBytes(rga);
     const textBefore = rga.text;
+    c.plainBefore = jsonBytes(db.snapshot({ compact: false }));
     c.snapshotBefore = jsonBytes(db.snapshot());
 
     // In a single-replica measurement everything held is causally stable; in a
@@ -109,6 +110,7 @@ export async function run({ seed = 7, sizes = [50, 200, 800, 2000] } = {}) {
     const reclaimed = rga.gc(db.clock.peek());
     const redirects = rga.dropRedirects();
     const afterBytes = jsonBytes(rga);
+    c.plainAfter = jsonBytes(db.snapshot({ compact: false }));
     c.snapshotAfter = jsonBytes(db.snapshot());
 
     return {
@@ -144,6 +146,7 @@ export async function run({ seed = 7, sizes = [50, 200, 800, 2000] } = {}) {
       revisions: c.revisions,
       operations: c.ops,
       logBytes,
+      plainBefore: c.plainBefore,
       snapshotBefore: c.snapshotBefore,
       snapshotAfter: c.snapshotAfter,
       vsLog: 1 - c.snapshotAfter / Math.max(1, logBytes),
@@ -156,17 +159,44 @@ export async function run({ seed = 7, sizes = [50, 200, 800, 2000] } = {}) {
       { key: 'revisions', label: 'Revisions', format: fmt.int },
       { key: 'operations', label: 'Operations', format: fmt.int },
       { key: 'logBytes', label: 'Encoded log', format: fmt.bytes },
+      { key: 'plainBefore', label: 'Plain snapshot (uncollected)', format: fmt.bytes },
       { key: 'snapshotBefore', label: 'Snapshot (uncollected)', format: fmt.bytes },
+      { key: 'uncollectedVsLog', label: 'vs log', format: fmt.pct },
       { key: 'snapshotAfter', label: 'Snapshot (collected)', format: fmt.bytes },
-      { key: 'vsLog', label: 'vs log', format: fmt.pct },
+      { key: 'vsLog', label: 'Collected vs log', format: fmt.pct },
     ],
     rows: compaction,
-  }, 'Compaction only pays once tombstones are collected. An uncollected '
-   + 'snapshot is no smaller than the encoded log -- it is slightly larger, '
-   + 'because it stores every element identifier in full while the codec '
-   + 'replaces in-batch references with integers. Applying the same interning '
-   + 'to the snapshot format would close that gap and is not done here. '
-   + 'Collected, the snapshot is what a new device should download.');
+  }, 'The plain snapshot stores every element identifier in full, so before '
+   + 'collection it is no smaller than the encoded log -- slightly larger. The '
+   + 'compact format interns those identifiers into one timestamp table and '
+   + 'stores sequences as columns, which makes even an uncollected snapshot '
+   + 'cheaper than the log. Collected, the snapshot is what a new device '
+   + 'should download.');
+
+  /* ------------------------------------------ what interning buys */
+
+  report.add('Snapshot interning: plain versus compact', {
+    columns: [
+      { key: 'revisions', label: 'Revisions', format: fmt.int },
+      { key: 'plainBefore', label: 'Plain (uncollected)', format: fmt.bytes },
+      { key: 'snapshotBefore', label: 'Compact (uncollected)', format: fmt.bytes },
+      { key: 'savingBefore', label: 'Saving', format: fmt.pct },
+      { key: 'plainAfter', label: 'Plain (collected)', format: fmt.bytes },
+      { key: 'snapshotAfter', label: 'Compact (collected)', format: fmt.bytes },
+      { key: 'savingAfter', label: 'Saving', format: fmt.pct },
+    ],
+    rows: cases.map((c) => ({
+      revisions: c.revisions,
+      plainBefore: c.plainBefore,
+      snapshotBefore: c.snapshotBefore,
+      savingBefore: 1 - c.snapshotBefore / Math.max(1, c.plainBefore),
+      plainAfter: c.plainAfter,
+      snapshotAfter: c.snapshotAfter,
+      savingAfter: 1 - c.snapshotAfter / Math.max(1, c.plainAfter),
+    })),
+  }, 'Both forms hold identical state and expand to the same CRDTs; the compact '
+   + 'one is what `snapshot()` writes. Neither is DEFLATEd here, to match the '
+   + 'log column above.');
 
   return report;
 }

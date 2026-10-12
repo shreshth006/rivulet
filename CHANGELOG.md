@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Storage & Compaction
+
+- Compact snapshot format (version 2, `src/core/snapshot.js`). Structural
+  timestamps are interned into one run-length-encoded columnar table, field
+  names are listed once per collection, and sequences are stored as columns.
+  An uncollected snapshot is now 77–78% smaller than the encoded log rather than
+  0.2–16% larger; a collected one is 69–72% smaller than before.
+- `snapshot({ compact: false })` still writes the plain version-1 form, and
+  version-1 snapshots already in storage continue to load.
+- `bench/scenarios/overhead.js` reports plain and compact snapshot sizes side by side.
+
 ## 0.2.0
 
 Comprehensive query, reliability, diagnostic, and developer tooling enhancements.

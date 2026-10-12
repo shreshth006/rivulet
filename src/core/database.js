@@ -25,8 +25,14 @@ import { ORSet } from '#core/crdt/or-set';
 import { RGA } from '#core/crdt/rga';
 import { textEdit } from '#core/text-diff';
 import { ValidationError } from '#core/errors';
+import { packCollections, expandCollections } from '#core/snapshot';
 
-const SNAPSHOT_VERSION = 1;
+/**
+ * Version 2 interns identifiers (see `#core/snapshot`); version 1 stored CRDT
+ * state as plain JSON. Both load, so snapshots already on disk stay readable.
+ */
+const SNAPSHOT_VERSION = 2;
+const READABLE_SNAPSHOT_VERSIONS = [1, 2];
 
 function matchField(actual, expected) {
   if (expected && typeof expected === 'object' && !Array.isArray(expected) && !(expected instanceof RegExp)) {
@@ -278,8 +284,12 @@ export class Database extends Emitter {
 
   // ----------------------------------------------------------- persistence
 
-  /** Full CRDT state -- the compaction artefact, not a value dump. */
-  snapshot() {
+  /**
+   * Full CRDT state -- the compaction artefact, not a value dump.
+   * @param {{ compact?: boolean }} [opts] `compact: false` writes the plain
+   *   version-1 form, for debugging and for the evaluation's ablation.
+   */
+  snapshot({ compact = true } = {}) {
     /** @type {Record<string, Record<string, any>>} */
     const collections = {};
     for (const [name, docs] of this.#collections) {
@@ -287,14 +297,14 @@ export class Database extends Emitter {
       collections[name] = {};
       for (const id of [...docs.keys()].sort()) collections[name][id] = docs.get(id).toJSON();
     }
-    return {
-      v: SNAPSHOT_VERSION,
+    const header = {
       schema: this.#schema.fingerprint,
       node: this.node,
       seq: this.#factory.seq,
       ts: this.#clock.peek(),
-      collections,
     };
+    if (!compact) return { v: 1, ...header, collections };
+    return { v: SNAPSHOT_VERSION, ...header, ...packCollections(collections, this.#schema) };
   }
 
   /**
@@ -303,7 +313,7 @@ export class Database extends Emitter {
    * snapshot without discarding local writes it has not yet pushed.
    */
   loadSnapshot(snap) {
-    if (!snap || snap.v !== SNAPSHOT_VERSION) {
+    if (!snap || !READABLE_SNAPSHOT_VERSIONS.includes(snap.v)) {
       throw new ValidationError('unsupported snapshot version', { got: snap?.v, expected: SNAPSHOT_VERSION });
     }
     if (snap.schema !== this.#schema.fingerprint) {
@@ -311,8 +321,9 @@ export class Database extends Emitter {
         snapshot: snap.schema, local: this.#schema.fingerprint,
       });
     }
+    const collections = snap.v === 1 ? snap.collections : expandCollections(snap, this.#schema);
     let merged = 0;
-    for (const [name, docs] of Object.entries(snap.collections ?? {})) {
+    for (const [name, docs] of Object.entries(collections ?? {})) {
       if (!this.#schema.has(name)) continue;
       const collection = this.#schema.collection(name);
       const target = this.#collections.get(name);

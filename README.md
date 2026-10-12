@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 258 tests, no dependencies
+npm test                                            # 264 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -197,9 +197,6 @@ Stated plainly, because they bound where this is the right tool:
 - **Metadata grows with replica count.** A version vector has an entry per
   replica: an idle sync request is 125 B at 2 replicas and 401 B at 32. Fine for
   a team, not for a document shared with a hundred thousand people.
-- **The snapshot format does not intern identifiers**, so an uncollected
-  snapshot is slightly *larger* than the encoded log. Collected, it is 96–99.7%
-  smaller. Applying the codec's interning to snapshots is unfinished work.
 - **Adaptive batching does not beat a well-chosen constant.** It gets within
   1.29–1.71× of the best fixed size without being told which network it is on,
   while the worst plausible fixed choice is 2.2–286× off. If you know your
@@ -233,7 +230,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (258 tests)
+npm test              # everything (264 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

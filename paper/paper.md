@@ -441,11 +441,22 @@ Collection is safe only below a causally stable timestamp, and leaves redirects
 so that an operation still naming a collected tombstone is rebased onto its
 surviving neighbour. Text was verified intact after collection in every case.
 
-An unflattering finding: an **uncollected** snapshot is 0.2–16% *larger* than
-the encoded operation log, because the snapshot format stores identifiers in
-full while the codec interns them. Compaction only pays once tombstones are
-collected, after which the snapshot is 96.4–99.9% smaller than the log.
-Applying the codec's interning to the snapshot format is unfinished work.
+Stored as plain JSON, an **uncollected** snapshot is 0.2–16% *larger* than the
+encoded operation log, because it spells out every identifier the codec interns.
+The snapshot format therefore applies the same idea: one columnar timestamp
+table, run-length encoded, referenced by index from every structural position,
+with field names interned per collection and sequences stored as columns.
+
+| Revisions | Encoded log | Plain snapshot | Compact snapshot | Compact, collected |
+|--:|--:|--:|--:|--:|
+| 50 | 110.3 kB | 128.1 kB | 25.5 kB (−76.9%) | 1.2 kB (−98.9%) |
+| 200 | 524.0 kB | 561.0 kB | 119.5 kB (−77.2%) | 1.8 kB (−99.7%) |
+| 800 | 2.41 MB | 2.49 MB | 542.7 kB (−77.5%) | 1.9 kB (−99.9%) |
+| 2 000 | 7.10 MB | 7.11 MB | 1.55 MB (−78.1%) | 2.6 kB (−99.96%) |
+
+Percentages are against the encoded log. Interning alone removes 78–80% of an
+uncollected snapshot and 69–72% of a collected one, so compaction now pays
+before tombstones are collected, not only after.
 
 ## 6.6 Scaling in replicas
 
@@ -542,8 +553,6 @@ results rather than as design.
 - **Metadata is linear in replica count**, bounding practical sharing (§6.6).
   Compressed vector encodings or server-assigned sequence positions would
   extend that bound.
-- **Snapshots do not intern identifiers** (§6.5), the single clearest piece of
-  unfinished work.
 - **Text merging is character-level, not intent-level.** Two people rewriting
   the same sentence receive a correct merge that may read badly. No CRDT solves
   this; it is why a multi-value type is offered.

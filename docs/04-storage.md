@@ -117,10 +117,20 @@ state. A replica bootstrapping from a snapshot should pay the second.
 Compaction is only safe up to a frontier every replica has — anything newer may
 still be the answer to a pull from a replica that has been offline for a week.
 
-One honest finding from the evaluation: compaction only pays *once tombstones
-are collected*. An uncollected snapshot is slightly **larger** than the encoded
-log, because the snapshot format stores every element identifier in full while
-the codec replaces in-batch references with integers. Applying the same
-interning to the snapshot format would close that gap and is unfinished work.
+Stored naively, a snapshot is mostly identifiers: every RGA element, set tag
+and register write carries a 34-character timestamp, and every document repeats
+its field names. Plain JSON of that state is slightly **larger** than the
+encoded log, because the codec already strips exactly this redundancy.
 
-Collected, the snapshot is 96–99.9% smaller than the log.
+So snapshots (format version 2, `src/core/snapshot.js`) get the codec's
+treatment. Every structural timestamp is interned once into a columnar table —
+wall-clock deltas, counters and node indices, each run-length encoded — and
+referenced by index. Field names are listed once per collection. Sequences are
+stored as columns; since an RGA is written in document order its element ids
+are consecutive table indices, and their deltas collapse to a single run.
+As in the codec, application values are never rewritten.
+
+The effect, on the evaluation's heavy-rewrite workload: an uncollected snapshot
+is 77–78% smaller than the encoded log instead of 0.2–16% larger, and a
+collected one is 98.9–99.96% smaller. Version-1 snapshots still load;
+`snapshot({ compact: false })` still writes one, for debugging.
