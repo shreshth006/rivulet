@@ -123,6 +123,24 @@ const token = issueRoomToken(secret, {
 new HttpTransport({ url, room: 'notebook', node: replicaId, token });
 ```
 
+### End-to-end encryption
+
+```js
+import { generateRoomKey, deriveRoomKey } from './src/index.js';
+
+const key = generateRoomKey();   // share it out of band, e.g. in a link's #fragment
+const client = await RivuletClient.open({ schema, room, transport, encryption: { key } });
+
+// Or from a passphrase people can type (slow on purpose: 600k PBKDF2 rounds).
+const typed = await deriveRoomKey('correct horse battery staple', room);
+```
+
+Every replica in the room must use the same key. A replica with a different
+key, or one receiving unencrypted operations, stops with status `unauthorised`
+rather than applying anything. Local storage stays plaintext; only the wire and
+the server see ciphertext. Needs a server at this version or later, which
+completes partially pulled runs.
+
 For any other policy, pass `authorize(ctx)` to `startServer` or `SyncServer`.
 It sees `{ action, room, node, writes, credential, ip }` and may return false or
 throw an `AuthError`.

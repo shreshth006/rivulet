@@ -21,6 +21,7 @@ import { encodeOps } from '#protocol/codec';
 import { deflate, toBytes } from '#protocol/compress';
 import { allWorkloads } from '#bench/lib/workloads';
 import { Report, fmt } from '#bench/lib/report';
+import { OpSealer, generateRoomKey } from '#protocol/seal';
 
 const size = (value) => toBytes(JSON.stringify(value)).length;
 const compressed = async (value) => (await deflate(toBytes(JSON.stringify(value)), { level: 9 })).length;
@@ -117,6 +118,55 @@ export async function run({ seed = 1 } = {}) {
   }, 'Uncompressed, so each transformation is measured rather than partly '
    + 'absorbed by DEFLATE. Back-references dominate wherever text is typed; '
    + 'interning dominates wherever many documents are touched.');
+
+  /* ------------------------------------------ end-to-end encryption */
+
+  // Sealed runs (see `#protocol/seal`): each replica's consecutive operations
+  // are encoded, compressed and only then encrypted, so the codec's work
+  // survives. A run is what one push carries: one replica's own operations,
+  // in batches of 64, the client's default starting batch size.
+  const sealer = new OpSealer({ key: generateRoomKey(), room: 'bench' });
+  const sealedRows = [];
+  for (const w of workloads) {
+    const byNode = new Map();
+    for (const op of w.ops) {
+      if (!byNode.has(op.node)) byNode.set(op.node, []);
+      byNode.get(op.node).push(op);
+    }
+    let clearGz = 0, sealedGz = 0;
+    for (const own of byNode.values()) {
+      own.sort((a, b) => a.seq - b.seq);
+      for (let i = 0; i < own.length; i += 64) {
+        const batch = own.slice(i, i + 64);
+        clearGz += await compressed(encodeOps(batch));
+        sealedGz += await compressed(encodeOps(await sealer.seal(batch)));
+      }
+    }
+    sealedRows.push({
+      workload: w.name,
+      clear: clearGz / w.ops.length,
+      sealed: sealedGz / w.ops.length,
+      factor: sealedGz / clearGz,
+      vsPlainJson: 1 - sealedGz / size(w.ops),
+    });
+  }
+
+  report.add('Cost of end-to-end encryption', {
+    columns: [
+      { key: 'workload', label: 'Workload', align: 'left' },
+      { key: 'clear', label: 'Codec+gz/op', format: (n) => `${n.toFixed(1)} B` },
+      { key: 'sealed', label: 'Sealed+gz/op', format: (n) => `${n.toFixed(1)} B` },
+      { key: 'factor', label: 'Cost', format: fmt.ratio },
+      { key: 'vsPlainJson', label: 'Sealed vs JSON', format: fmt.pct },
+    ],
+    rows: sealedRows,
+  }, 'Both columns push each replica\'s own operations in batches of 64, as a '
+   + 'client does, so they are comparable; this is why the clear column differs '
+   + 'from the whole-workload figure above. Sealing '
+   + 'adds one AES-256-GCM nonce and tag per batch, base64url overhead, and a '
+   + 'pointer per operation; content is still interned, back-referenced and '
+   + 'compressed, but inside the ciphertext, where the outer DEFLATE cannot see '
+   + 'repetition across batches.');
 
   /* -------------------------------------------------- practical framing */
 

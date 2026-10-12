@@ -229,6 +229,37 @@ anyway is refused outright and goes to `unauthorised` rather than silently
 diverging. The simpler single deployment token (`--token`) remains, and now
 also guards the operational endpoints.
 
-What is *not* here, stated plainly: no end-to-end encryption, no per-user
-identity beyond what the token issuer encodes, and no revocation short of
-expiry or rotating the secret. The server sees plaintext operations.
+### End-to-end encryption
+
+A room can be opened with a key the server never sees (`encryption: { key }`
+on the client). The server keeps working because it only ever needed each
+operation's envelope — replica, sequence number, timestamp — and those stay in
+the clear. Collection, document, field and value are sealed with AES-256-GCM.
+
+Operations are sealed in **runs**, not one by one: a replica's consecutive
+operations, as one push carries them, go through the codec and DEFLATE and are
+then encrypted once. Sealing each operation separately cost 8–24× the bytes,
+because ciphertext does not compress; sealed runs cost 1.3–1.75× and are still
+85–93% smaller than plain JSON (`bench/results/bandwidth.md`).
+
+The ciphertext rides on the run's last operation; the others carry
+`{ "$r": <last seq> }`. Last rather than first because a retried push may repeat
+the start of a run the server already stored, and those operations are dropped
+as duplicates — the last one of a retry never is. When a pull page ends
+part-way through a run, the server adds the run's last operation to the page.
+That `$r` pointer is the only thing inside a payload the server ever reads.
+
+The room, replica, first and last sequence numbers and timestamp are bound to
+the ciphertext as authenticated data, and every operation inside is checked
+against them on opening. A key-holding replica refuses unsealed operations and
+anything that fails to open, and goes to `unauthorised`.
+
+What the server still learns: which replicas write, how often, when, and
+roughly how much; the schema fingerprint (collection and field names, sent at
+connect so version skew is caught); and room names. It also cannot compact an
+encrypted room, since it cannot materialise one. The key is shared by everyone
+in the room, so it protects against the server, not between members.
+
+What is *not* here, stated plainly: no per-user identity beyond what the token
+issuer encodes, no key rotation for an encrypted room, and no revocation short
+of token expiry or rotating the secret.

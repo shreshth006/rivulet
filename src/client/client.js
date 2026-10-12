@@ -33,6 +33,7 @@ import { defaultAdapter } from '#storage/index';
 import { SyncEngine, Status } from '#client/engine';
 import { newNodeId } from '#core/ids';
 import { ValidationError } from '#core/errors';
+import { OpSealer } from '#protocol/seal';
 
 /**
  * Serialises local writes into the operation log.
@@ -100,10 +101,13 @@ export class RivuletClient extends Emitter {
    * @param {() => number} [opts.physical] injectable clock, for tests
    * @param {string} [opts.node] identity to mint on first run; a previously
    *   stored identity always takes precedence
+   * @param {{ key: CryptoKey|string }} [opts.encryption] end-to-end encrypt
+   *   everything this client sends, and refuse anything that is not encrypted
+   *   under the same key. See `#protocol/seal`.
    */
   static async open({
     schema, room = 'default', storage, transport,
-    autoStart = true, sync: syncOpts, physical, node: fixedNode,
+    autoStart = true, sync: syncOpts, physical, node: fixedNode, encryption,
   }) {
     if (!schema) throw new ValidationError('a schema is required');
 
@@ -141,6 +145,7 @@ export class RivuletClient extends Emitter {
       ? new SyncEngine({
         db, log, transport: link, room, schema: schema.fingerprint,
         beforeSync: () => writes.drain(),
+        ...(encryption ? { sealer: new OpSealer({ key: encryption.key, room }) } : {}),
         ...syncOpts,
       })
       : null;

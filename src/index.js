@@ -31,5 +31,6 @@ export {
 
 // Occasionally useful directly: building a replica id, or comparing timestamps.
 export { newNodeId, isNodeId } from '#core/ids';
+export { generateRoomKey, importRoomKey, deriveRoomKey, OpSealer } from '#protocol/seal';
 export { compareTimestamps, timestampWallMs } from '#core/hlc';
 export { VersionVector } from '#core/version-vector';

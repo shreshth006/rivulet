@@ -296,6 +296,7 @@ export class SyncServer extends Emitter {
       const clientHas = baseVector ? applyVectorDelta(baseVector, msg.have ?? {}) : readVector(msg);
       const limit = Math.min(msg.limit ?? this.#limits.maxOpsPerPull, this.#limits.maxOpsPerPull);
       ({ ops: outgoing, more } = await room.log.delta(clientHas, { limit }));
+      outgoing = await this.#completeSealedRuns(room, outgoing);
     }
 
     return ack({
@@ -311,6 +312,29 @@ export class SyncServer extends Emitter {
       more,
       serverTs: Date.now(),
     });
+  }
+
+  /**
+   * An end-to-end encrypted replica seals its operations in runs whose
+   * ciphertext rides on the run's last operation; the others carry only
+   * `{ $r: <last seq> }` (see `#protocol/seal`). A page that stops part-way
+   * through a run would leave its reader holding pointers to nothing, so the
+   * run's last operation is added to the page. This reads one structural key
+   * and nothing else: the server still cannot see, and does not need, content.
+   */
+  async #completeSealedRuns(room, ops) {
+    const last = new Map();
+    for (const op of ops) {
+      if (!last.has(op.node) || op.seq > last.get(op.node).seq) last.set(op.node, op);
+    }
+    const extra = [];
+    for (const op of last.values()) {
+      const tail = op.payload?.$r;
+      if (!Number.isInteger(tail) || tail <= op.seq) continue;
+      const [found] = await room.log.read({ node: op.node, fromSeq: tail - 1, toSeq: tail, limit: 1 });
+      if (found) extra.push(found);
+    }
+    return extra.length ? [...ops, ...extra] : ops;
   }
 
   /**

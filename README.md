@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 282 tests, no dependencies
+npm test                                            # 289 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -205,10 +205,12 @@ Stated plainly, because they bound where this is the right tool:
   1.29–1.71× of the best fixed size without being told which network it is on,
   while the worst plausible fixed choice is 2.2–286× off. If you know your
   network, hard-code the number.
-- **No end-to-end encryption.** The server sees plaintext operations. Access is
-  controlled per room with signed, scoped tokens (read, write or admin), but
-  there is no per-user identity beyond what the token issuer encodes, and no
-  revocation short of expiry or rotating the secret.
+- **Encryption is per room, not per person.** With a room key the server sees
+  only who wrote, when and roughly how much, never what, at 1.3–1.75× the bytes
+  on the wire. Everyone in the room shares the key, there is no key rotation,
+  and the server cannot compact an encrypted room. Access is controlled per
+  room with signed, scoped tokens; there is no per-user identity beyond what
+  the token issuer encodes, and no revocation short of expiry.
 - **Text merging is character-level, not intent-level.** Two people rewriting
   the same sentence get a correct merge that may still read badly. No CRDT
   fixes that; it is why `mv` exists.
@@ -236,7 +238,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (282 tests)
+npm test              # everything (289 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

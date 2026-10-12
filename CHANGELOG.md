@@ -38,6 +38,17 @@
 
 ### Security
 
+- End-to-end encryption (`src/protocol/seal.js`). `encryption: { key }` on
+  `RivuletClient.open` seals collection, document, field and value with
+  AES-256-GCM; the server keeps only the envelope. Operations are sealed in
+  runs -- encoded and compressed, then encrypted once -- at 1.3–1.75× the wire
+  cost of plaintext, against 8–24× for per-operation sealing. Room, replica,
+  sequence range and timestamp are authenticated; tampered, replayed, foreign
+  or unencrypted operations are refused. `generateRoomKey`, `importRoomKey`,
+  `deriveRoomKey` and `OpSealer` are exported.
+- The server adds a sealed run's last operation to any pull page that ends
+  part-way through the run.
+
 - Room-scoped access tokens (`src/server/tokens.js`): stateless HMAC-SHA256
   tokens naming a room, a room prefix or `*`, with `read`, `write` or `admin`
   scope, optional replica binding and optional expiry. `issueRoomToken`,

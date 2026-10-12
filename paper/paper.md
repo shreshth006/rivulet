@@ -560,10 +560,12 @@ results rather than as design.
 - **Convergence is checked, not proven.** Property testing over many random
   schedules is strong evidence, not a proof. The types are standard with
   published correctness arguments; these implementations are not verified.
-- **Security is minimal.** Operations are constrained to their sending replica,
-  and access is controlled per room by signed, scoped tokens; there is no
-  end-to-end encryption, no per-user identity and no revocation short of
-  expiry. The server sees plaintext.
+- **Security is room-grained.** Operations are constrained to their sending
+  replica, access is controlled per room by signed, scoped tokens, and a room
+  can be end-to-end encrypted in sealed runs at 1.3–1.75× the wire cost. But a
+  room's members share one key, there is no key rotation or per-user identity,
+  envelope metadata (who, when, how much) stays visible, and the server cannot
+  compact what it cannot read.
 - **Metadata is per replica** (§6.6). Vector deltas keep an idle poll flat, but
   a lagging client's request and every replica's stored state still grow with
   the number of replicas. Server-assigned sequence positions would make the

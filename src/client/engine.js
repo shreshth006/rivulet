@@ -82,6 +82,7 @@ export class SyncEngine extends Emitter {
   #timers;
   #beforeSync;
   #codec;
+  #sealer;
 
   /**
    * @param {object} opts
@@ -102,11 +103,13 @@ export class SyncEngine extends Emitter {
    *   encoding. Swappable so the evaluation can measure a naive baseline
    *   through the identical protocol and transport rather than modelling it.
    * @param {object} [opts.timers] injectable setTimeout/clearTimeout/now, for tests
+   * @param {{seal: Function, open: Function}} [opts.sealer] end-to-end
+   *   encryption at the wire; see `OpSealer` in `#protocol/seal`
    */
   constructor({
     db, log, transport, room, schema,
     pollMs = 15_000, debounceMs = 120, maxBackoffMs = 30_000,
-    batching, timers, beforeSync, codec,
+    batching, timers, beforeSync, codec, sealer,
   }) {
     super();
     this.#db = db;
@@ -116,6 +119,7 @@ export class SyncEngine extends Emitter {
     this.#schema = schema;
     this.#batcher = new AdaptiveBatcher(batching);
     this.#codec = codec ?? { encode: encodeOps, decode: decodeOps };
+    this.#sealer = sealer ?? null;
     this.#beforeSync = beforeSync ?? (() => Promise.resolve());
     this.#opts = { pollMs, debounceMs, maxBackoffMs };
     this.#timers = timers ?? {
@@ -326,7 +330,7 @@ export class SyncEngine extends Emitter {
 
     const request = syncMessage({
       node, room: this.#room, have, base,
-      push: outbox.length ? this.#codec.encode(outbox) : undefined,
+      push: outbox.length ? this.#codec.encode(this.#sealer ? await this.#sealer.seal(outbox) : outbox) : undefined,
       limit,
       schema: this.#schema,
     });
@@ -347,7 +351,10 @@ export class SyncEngine extends Emitter {
     /* ---- their push ---- */
     let applied = 0;
     if (reply.pull) {
-      const incoming = this.#codec.decode(reply.pull);
+      let incoming = this.#codec.decode(reply.pull);
+      // Opened as a whole before anything is stored: one operation that fails
+      // to decrypt rejects the batch rather than leaving half of it applied.
+      if (this.#sealer) incoming = await this.#sealer.open(incoming);
       const { fresh } = await this.#log.append(incoming);
       // Only genuinely new operations reach the CRDTs; see the op log's contract.
       this.#db.applyAll(fresh);
