@@ -74,7 +74,15 @@ export class SyncEngine extends Emitter {
   #inFlight = null;
   #queued = null;
   #timer = null;
+  /** When the pending timer fires, so a sooner request can replace it. */
+  #timerDue = 0;
   #unsubscribe = null;
+  #streamTimer = null;
+  #streamAttempt = 0;
+  #streamOpening = false;
+  #streamWired = false;
+  /** Whether the queued follow-up round was asked for by the application. */
+  #queuedExplicit = false;
   #dirty = false;
   #lastError = null;
 
@@ -165,6 +173,7 @@ export class SyncEngine extends Emitter {
     this.#running = false;
     this.#db.off('local-ops', this.#onLocalOps);
     if (this.#timer !== null) { this.#timers.clearTimeout(this.#timer); this.#timer = null; }
+    if (this.#streamTimer !== null) { this.#timers.clearTimeout(this.#streamTimer); this.#streamTimer = null; }
     this.#unsubscribe?.();
     this.#unsubscribe = null;
     await this.#inFlight?.catch(() => {});
@@ -195,10 +204,23 @@ export class SyncEngine extends Emitter {
     }
   }
 
-  /** Open the push stream if the transport has one. Failure is not fatal. */
-  async #openStream() {
+  /**
+   * Open the push stream if the transport has one. Failure is not fatal:
+   * polling covers it, and the stream is retried with backoff.
+   *
+   * Called on connect, after any successful sync while there is no stream (so
+   * a client that started offline gets one once the network is back), and
+   * after the stream drops -- which on a phone or a flaky link is routine.
+   */
+  async #openStream({ reopening = false } = {}) {
     if (!this.#transport.supportsPush || typeof this.#transport.subscribe !== 'function') return;
+    if (!this.#running || this.#unsubscribe || this.#streamOpening) return;
+    this.#streamOpening = true;
     try {
+      if (!this.#streamWired) {
+        this.#streamWired = true;
+        this.#transport.on?.('stream-closed', () => this.#onStreamClosed());
+      }
       this.#unsubscribe = await this.#transport.subscribe((msg) => {
         // The stream's opening frame only confirms the subscription; syncing
         // on it would duplicate the round `#connect` is about to run anyway.
@@ -207,26 +229,56 @@ export class SyncEngine extends Emitter {
         // the engine reacts by syncing through the normal path.
         this.#schedule(0);
       });
-      this.#transport.on?.('stream-closed', () => {
-        this.#unsubscribe = null;
-        this.emit('stream-closed', {});
-        this.#schedule(this.#opts.pollMs); // fall back to polling
-      });
+      this.#streamAttempt = 0;
+      // Whatever changed while the stream was down produced no nudge.
+      if (reopening) this.#schedule(0);
     } catch {
-      // No stream: polling covers it. Not worth surfacing to the application.
       this.#unsubscribe = null;
+      this.#retryStream();
+    } finally {
+      this.#streamOpening = false;
     }
+  }
+
+  #onStreamClosed() {
+    this.#unsubscribe = null;
+    this.emit('stream-closed', {});
+    this.#schedule(this.#opts.pollMs); // poll until the stream is back
+    this.#retryStream();
+  }
+
+  #retryStream() {
+    if (!this.#running || this.#streamTimer !== null || this.#status === Status.UNAUTHORISED) return;
+    const delay = backoffDelay(this.#streamAttempt++, { baseMs: 1000, maxMs: this.#opts.maxBackoffMs });
+    this.#streamTimer = this.#timers.setTimeout(() => {
+      this.#streamTimer = null;
+      this.#openStream({ reopening: true }).catch(() => {});
+    }, delay);
+    this.#streamTimer?.unref?.();
   }
 
   /* ------------------------------------------------------------ scheduling */
 
-  /** Ask for a sync in `delay` ms, collapsing any already-pending request. */
+  /**
+   * Ask for a sync in `delay` ms, collapsing with any pending request. A
+   * sooner request replaces a later one: a stream nudge must not wait behind
+   * the idle poll that is pending after every round.
+   */
   #schedule(delay) {
-    if (!this.#running || this.#timer !== null) return;
+    // Unauthorised is terminal until the application acts: neither a poll nor
+    // a stream nudge will make bad credentials or a wrong room key good.
+    if (!this.#running || this.#status === Status.UNAUTHORISED) return;
+    const wait = Math.min(Math.max(0, delay), MAX_TIMER_DELAY);
+    const due = this.#timers.now() + wait;
+    if (this.#timer !== null) {
+      if (due >= this.#timerDue) return;
+      this.#timers.clearTimeout(this.#timer);
+    }
+    this.#timerDue = due;
     this.#timer = this.#timers.setTimeout(() => {
       this.#timer = null;
-      this.sync().catch(() => {});
-    }, Math.min(Math.max(0, delay), MAX_TIMER_DELAY));
+      this.#sync({ auto: true }).catch(() => {});
+    }, wait);
     // A pending poll must not by itself keep a Node process alive: a CLI that
     // has finished its work should exit, not wait out the next interval.
     this.#timer?.unref?.();
@@ -280,14 +332,31 @@ export class SyncEngine extends Emitter {
    *
    * @returns {Promise<{pushed: number, pulled: number, rounds: number}>}
    */
-  async sync() {
+  async sync() { return this.#sync({ auto: false }); }
+
+  /**
+   * `auto` marks rounds the engine starts itself -- polls, stream nudges,
+   * retries. Those stand down once credentials are refused; a round the
+   * application asks for always runs, including one that joins a queued
+   * automatic round.
+   */
+  #sync({ auto }) {
     if (!this.#inFlight) {
+      if (auto && this.#status === Status.UNAUTHORISED) {
+        return Promise.resolve({ pushed: 0, pulled: 0, rounds: 0 });
+      }
       this.#inFlight = this.#syncLoop().finally(() => { this.#inFlight = null; });
       return this.#inFlight;
     }
+    if (!auto) this.#queuedExplicit = true;
     this.#queued ??= this.#inFlight
       .catch(() => {})
-      .then(() => { this.#queued = null; return this.sync(); });
+      .then(() => {
+        const explicit = this.#queuedExplicit;
+        this.#queued = null;
+        this.#queuedExplicit = false;
+        return this.#sync({ auto: !explicit });
+      });
     return this.#queued;
   }
 
@@ -312,6 +381,8 @@ export class SyncEngine extends Emitter {
       this.#setStatus(Status.LIVE);
       this.emit('sync', { pushed, pulled, rounds, batchSize: this.#batcher.size });
       this.#scheduleIdle();
+      // Reachable again but no stream (it failed, or we started offline).
+      if (!this.#unsubscribe && this.#streamTimer === null) this.#openStream().catch(() => {});
       return { pushed, pulled, rounds };
     } catch (err) {
       this.#handleFailure(err, this.#timers.now() - startedAt);

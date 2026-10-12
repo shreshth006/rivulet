@@ -2,19 +2,42 @@
 
 ## Unreleased
 
+### Android
+
+- `apps/android`: **Rivulet Sync**, a background daemon that gives any Android
+  app offline-first synced storage through a ContentProvider, running the
+  engine's own JavaScript in an off-screen WebView; a `client` library (one
+  class, `Rivulet`); and **Rivulet Notes**, an example app built only on it.
+  Rooms are private to the registering app, access is a runtime permission,
+  sync runs through JobScheduler with an optional live foreground service, and
+  encrypted rooms work unchanged. Verified on an Android 15 emulator.
+- `Dockerfile` and `docker-compose.yml` for the sync server.
+- The server answers Private Network Access preflights, so a page on a secure
+  origin (such as the daemon's engine) can reach a server on a private address.
+
+### Fixes
+
+- Live updates never reached an idle client. A stream nudge asked for a sync,
+  but the scheduler kept whichever timer was already pending, and after every
+  round that is the idle poll; the nudge waited out the poll. A sooner request
+  now replaces a later one.
+- A dropped event stream was never reopened, and a client that started offline
+  never opened one. The engine now reopens the stream with backoff, syncs on
+  reopening, and opens it after the first successful sync.
+- An `unauthorised` client could be pulled back into syncing by its own polls
+  and stream nudges. Automatic rounds now stand down until the application
+  calls `sync()` itself.
+- `OpLog.append` now de-duplicates within a batch as well as against storage.
+  A batch listing the same operation twice used to apply it twice, so a
+  counter increment could land double. Found by a randomized stress test of
+  encrypted rooms, where overlapping sealed runs deliver exactly such a batch.
+
 ### Demo
 
 - "New encrypted room" starts an end-to-end encrypted room whose name and key
   live in the link's `#fragment`, which browsers never send to the server; a
   lock badge and "Copy invite link" replace the button inside one. Needs a
   secure context (https or localhost) and says so otherwise.
-
-### Fixes
-
-- `OpLog.append` now de-duplicates within a batch as well as against storage.
-  A batch listing the same operation twice used to apply it twice, so a
-  counter increment could land double. Found by a randomized stress test of
-  encrypted rooms, where overlapping sealed runs deliver exactly such a batch.
 
 ### Storage & Compaction
 
