@@ -102,7 +102,14 @@ only the rooms their token covers.
 ## Things that will bite
 
 - **`--memory` is not durable.** It is for demos and tests.
-- **No rate limiting.** A misbehaving client can sync in a tight loop.
+- **Rate limits are per process.** `startServer` and the CLI give each replica
+  in each room a token bucket (5 requests/s sustained, bursts of 40) and each IP
+  address a much looser one (125/s, bursts of 1000), since hostel, campus and
+  mobile NATs put many honest people behind one address. Refusals are 429 with
+  `Retry-After`, and clients wait at least that long. The buckets live in
+  memory, so several processes behind a load balancer each enforce their own.
+  Tune with `--rate <n>` (the rest scales with it) or turn it off with
+  `--no-rate-limit`.
 - **SSE connections hold a socket each.** A room with many live viewers needs
   the file-descriptor limit raised.
 - **`synchronous = NORMAL`** means an OS crash can lose recently committed

@@ -105,6 +105,9 @@ const server = await startServer({
   dataDir: './data',        // one SQLite file per room
   schema: schema.fingerprint,  // pin it, so version skew is a clear error
   secret: process.env.RIVULET_SECRET,  // room-scoped tokens; or `token` for one shared token
+  // On by default: { perSecond: 5, burst: 40, perIp: { perSecond: 125, burst: 1000 } }.
+  // `false` turns it off. `SyncServer` takes the same option, off by default.
+  rateLimit: { perSecond: 5, burst: 40 },
 });
 ```
 
@@ -165,6 +168,7 @@ Branch on `code`, never on message text.
 | `E_STORAGE` | `StorageError` | Disk, quota, transaction abort |
 | `E_TRANSPORT` | `TransportError` | Network failure; always retryable |
 | `E_AUTH` | `AuthError` | Rejected credentials; do not retry |
+| `E_LIMIT` | `LimitError` | Rate limited or over a server ceiling; retried after `details.retryAfterMs` when given |
 | `E_CLOCK_DRIFT` | `ClockDriftError` | A remote clock is too far ahead |
 
 `TransportError` carries a `kind` — `timeout`, `lost` or `unreachable` — and

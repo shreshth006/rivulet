@@ -38,6 +38,15 @@
 
 ### Security
 
+- Rate limiting (`src/server/rate-limit.js`): token buckets per replica per
+  room, and a looser one per IP address so rotating replica ids does not evade
+  it. Checked before authorisation or any room work. On by default in
+  `startServer` and the CLI (`--rate`, `--no-rate-limit`), off by default in
+  `SyncServer`. Refusals are HTTP 429 with `Retry-After`; both transports raise
+  a `LimitError` and the client waits at least as long as the server asked.
+- `/v1/stream` now subscribes before sending headers, so a refused stream is a
+  status code rather than a connection that opens and drops.
+
 - End-to-end encryption (`src/protocol/seal.js`). `encryption: { key }` on
   `RivuletClient.open` seals collection, document, field and value with
   AES-256-GCM; the server keeps only the envelope. Operations are sealed in

@@ -19,7 +19,7 @@
  */
 
 import { Emitter } from '#core/util';
-import { TransportError, AuthError, ProtocolError } from '#core/errors';
+import { TransportError, AuthError, ProtocolError, LimitError } from '#core/errors';
 import { packMessage, unpackMessage, Encoding, ByteMeter } from '#protocol/framing';
 
 /**
@@ -111,6 +111,7 @@ export class LoopbackTransport extends Emitter {
 
   #translate(err) {
     if (err?.code === 'E_AUTH') return new AuthError(err.message, err.details);
+    if (err?.code === 'E_LIMIT') return new LimitError(err.message, err.details);
     if (err?.code === 'E_PROTOCOL' || err?.code === 'E_VALIDATION') {
       return new ProtocolError(err.message, err.details);
     }
@@ -196,6 +197,12 @@ export class HttpTransport extends Emitter {
 
     if (response.status === 401 || response.status === 403) {
       throw new AuthError('server rejected the credentials', { status: response.status });
+    }
+    if (response.status === 429) {
+      const seconds = Number(response.headers.get('retry-after'));
+      throw new LimitError('server is rate limiting this client', {
+        status: 429, retryAfterMs: Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : undefined,
+      });
     }
     if (!response.ok) {
       const body = await response.text().catch(() => '');

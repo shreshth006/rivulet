@@ -6,16 +6,16 @@ import { HttpTransport } from '#client/transport';
 import { RivuletClient } from '#client/client';
 import { MemoryAdapter } from '#storage/adapter';
 import { notebookSchema } from '../../test/helpers/fixtures.js';
-import { AuthError, TransportError } from '#core/errors';
+import { AuthError, TransportError, LimitError } from '#core/errors';
 import { nodeIdFromLabel } from '#core/ids';
 import { issueRoomToken, roomTokens } from '#server/tokens';
 
 /** Start a real HTTP server on an ephemeral port. */
-async function serve({ token, authorize, schema = notebookSchema } = {}) {
+async function serve({ token, authorize, rateLimit, schema = notebookSchema } = {}) {
   const engine = new SyncServer({
     storage: async (room) => new MemoryAdapter({ name: room }),
     schema: schema.fingerprint,
-    authorize,
+    authorize, rateLimit,
   });
   return new HttpSyncServer({ engine, token }).listen(0);
 }
@@ -217,6 +217,27 @@ test('room tokens: inspection needs admin scope, and stats needs it for every ro
   assert.equal((await get('/v1/room?name=http-room', roomToken({ room: 'http-room', scope: 'admin' }))).status, 200);
   assert.equal((await get('/v1/stats', roomToken({ room: 'http-room', scope: 'admin' }))).status, 403);
   assert.equal((await get('/v1/stats', roomToken({ room: '*', scope: 'admin' }))).status, 200);
+});
+
+test('rate limiting answers 429 with Retry-After, and the client reads it', async (t) => {
+  const server = await serve({ rateLimit: { perSecond: 0.5, burst: 2 } });
+  t.after(() => server.close());
+  const node = nodeIdFromLabel('rl-http');
+  const transport = new HttpTransport({ url: server.url, room: 'http-room', node });
+  const msg = { t: 'sync', pv: 1, node, room: 'http-room', have: {} };
+  await transport.request(msg);
+  await transport.request(msg);
+  await assert.rejects(() => transport.request(msg), (err) => {
+    assert.ok(err instanceof LimitError);
+    assert.equal(err.details.retryAfterMs, 2000);
+    return true;
+  });
+
+  // The stream is refused with a status, not opened and dropped.
+  const stream = await fetch(`${server.url}/v1/stream?room=http-room&node=${node}`);
+  assert.equal(stream.status, 429);
+  assert.equal(stream.headers.get('retry-after'), '2');
+  await stream.body?.cancel();
 });
 
 test('health and stats report the server state', async (t) => {

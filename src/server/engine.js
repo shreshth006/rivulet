@@ -30,6 +30,7 @@ import {
   validateMessage, readVector, assertSchemaMatch, applyVectorDelta,
 } from '#protocol/messages';
 import { newNodeId } from '#core/ids';
+import { RateLimiter } from '#server/rate-limit';
 import { AuthError, ProtocolError, ValidationError, RivuletError, LimitError } from '#core/errors';
 
 /** How many recent frontiers a room remembers as delta bases. */
@@ -119,6 +120,8 @@ export class SyncServer extends Emitter {
   #schema;
   #codec;
   #maxRooms;
+  #perReplica = null;
+  #perIp = null;
 
   /**
    * @param {object} opts
@@ -134,8 +137,11 @@ export class SyncServer extends Emitter {
    * @param {{encode: Function, decode: Function}} [opts.codec] operation batch
    *   encoding; must match what clients use
    * @param {number} [opts.maxRooms] maximum number of concurrently open rooms
+   * @param {object} [opts.rateLimit] token buckets, off by default here and on
+   *   in `startServer`: `{ perSecond, burst }` per replica per room, plus an
+   *   optional looser `perIp: { perSecond, burst }`. See `#server/rate-limit`.
    */
-  constructor({ storage, schema, authorize, limits, node, codec, maxRooms = Infinity } = {}) {
+  constructor({ storage, schema, authorize, limits, node, codec, maxRooms = Infinity, rateLimit } = {}) {
     super();
     if (typeof storage !== 'function') {
       throw new ValidationError('SyncServer needs a storage factory');
@@ -147,6 +153,10 @@ export class SyncServer extends Emitter {
     this.#maxRooms = limits?.maxRooms ?? maxRooms;
     this.#node = node ?? null;
     this.#codec = codec ?? { encode: encodeOps, decode: decodeOps };
+    if (rateLimit) {
+      this.#perReplica = new RateLimiter(rateLimit);
+      if (rateLimit.perIp) this.#perIp = new RateLimiter(rateLimit.perIp);
+    }
   }
 
   get node() { return (this.#node ??= newNodeId()); }
@@ -201,6 +211,20 @@ export class SyncServer extends Emitter {
     return opening;
   }
 
+  /**
+   * Spend a request from the caller's budgets, before any other work -- and
+   * before authorisation, so a client guessing credentials is throttled too.
+   */
+  #throttle(ctx, room, node) {
+    const checks = [];
+    if (this.#perIp && ctx.ip) checks.push(() => this.#perIp.take(ctx.ip));
+    if (this.#perReplica && node) checks.push(() => this.#perReplica.take(`${room}\u0000${node}`));
+    for (const check of checks) {
+      const result = check();
+      if (!result.ok) throw new LimitError('too many requests', { retryAfterMs: result.retryAfterMs });
+    }
+  }
+
   /** Throw unless the configured hook allows this access. */
   async authorize(ctx) {
     if (!(await this.#authorize(ctx))) {
@@ -213,6 +237,7 @@ export class SyncServer extends Emitter {
   /** Capability negotiation and an early schema check. */
   async handleHello(msg, ctx = {}) {
     validateMessage(msg, MessageType.HELLO);
+    this.#throttle(ctx, msg.room, msg.node);
     await this.authorize({ ...ctx, action: 'hello', room: msg.room, node: msg.node, writes: false });
     assertSchemaMatch(this.#schema ?? msg.schema, msg.schema);
 
@@ -238,6 +263,7 @@ export class SyncServer extends Emitter {
    */
   async handleSync(msg, ctx = {}) {
     validateMessage(msg, MessageType.SYNC);
+    this.#throttle(ctx, msg.room, msg.node);
     // A request carrying operations is a write; one that only pulls is a read,
     // so a read-only credential can still follow a room.
     const writes = Boolean(msg.push && (msg.push.n ?? 1) > 0);
@@ -360,6 +386,7 @@ export class SyncServer extends Emitter {
    * whether it needs a catch-up sync before trusting the stream.
    */
   async subscribe(roomName, listener, { node, ...ctx } = {}) {
+    this.#throttle(ctx, roomName, node);
     await this.authorize({ ...ctx, action: 'subscribe', room: roomName, node, writes: false });
     const room = await this.room(roomName);
     if (node) listener.node = node;

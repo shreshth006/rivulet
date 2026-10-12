@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 289 tests, no dependencies
+npm test                                            # 296 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -238,7 +238,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (289 tests)
+npm test              # everything (296 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

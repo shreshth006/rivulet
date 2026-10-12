@@ -239,10 +239,17 @@ export class HttpSyncServer {
     const room = url.searchParams.get('room');
     const node = url.searchParams.get('node') ?? undefined;
     if (!room) return this.#json(res, 400, { error: 'room is required' });
-    // Checked before the headers go out, so a refusal is a status code rather
-    // than a stream that opens and then dies.
-    const ctx = this.#context(req);
-    await this.#engine.authorize({ ...ctx, action: 'subscribe', room, node, writes: false });
+    const listener = (ops, from) => {
+      // Only a notification, never the operations themselves: the client pulls
+      // through the normal path, so a missed frame costs latency, not data --
+      // which is also why one arriving before the headers can simply be dropped.
+      if (!res.headersSent) return;
+      res.write(`data: ${JSON.stringify({ t: 'event', n: ops.length, from })}\n\n`);
+    };
+
+    // Subscribing throttles and authorises, and happens before the headers go
+    // out, so a refusal is a status code rather than a stream that opens and dies.
+    const { off, have } = await this.#engine.subscribe(room, listener, { node, ...this.#context(req) });
 
     res.writeHead(200, {
       'content-type': 'text/event-stream',
@@ -254,14 +261,6 @@ export class HttpSyncServer {
     });
     res.write('retry: 3000\n\n');
     this.#streams.add(res);
-
-    const listener = (ops, from) => {
-      // Only a notification, never the operations themselves: the client pulls
-      // through the normal path, so a missed frame costs latency, not data.
-      res.write(`data: ${JSON.stringify({ t: 'event', n: ops.length, from })}\n\n`);
-    };
-
-    const { off, have } = await this.#engine.subscribe(room, listener, { node, ...ctx });
     res.write(`data: ${JSON.stringify({ t: 'ready', have: have.toJSON() })}\n\n`);
 
     const cleanup = () => { off(); this.#streams.delete(res); };
@@ -318,17 +317,33 @@ export class HttpSyncServer {
 
   #fail(res, err) {
     if (res.headersSent) return res.end();
+    const wait = err?.code === 'E_LIMIT' ? err.details?.retryAfterMs : undefined;
+    if (Number.isFinite(wait)) res.setHeader('retry-after', String(Math.max(1, Math.ceil(wait / 1000))));
     this.#json(res, SyncServer.statusFor(err), SyncServer.toErrorMessage(err));
   }
 }
 
 /**
+ * What `startServer` enforces unless told otherwise. A replica that is opening,
+ * catching up and pushing a backlog makes a few dozen requests back to back,
+ * then settles to one per poll; 40 covers the burst and 5/s is far above any
+ * honest steady state. The per-IP budget assumes up to ~25 busy people behind
+ * one address.
+ */
+export const DEFAULT_RATE_LIMIT = Object.freeze({
+  perSecond: 5, burst: 40,
+  perIp: Object.freeze({ perSecond: 125, burst: 1000 }),
+});
+
+/**
  * Convenience factory: a listening server with SQLite-backed rooms.
+ * `rateLimit: false` turns limiting off.
  * @param {object} opts
  */
 export async function startServer({
   port = 8787, host = '127.0.0.1', dataDir = './data', schema,
   token, secret, authorize, staticDir, mounts, origins, memory = false,
+  rateLimit = DEFAULT_RATE_LIMIT,
 } = {}) {
   const { SqliteAdapter } = await import('#storage/sqlite');
   const { MemoryAdapter } = await import('#storage/adapter');
@@ -339,6 +354,7 @@ export async function startServer({
     schema,
     // `secret` turns on room-scoped tokens; `authorize` is the general hook.
     authorize: authorize ?? (secret ? roomTokens(secret) : undefined),
+    rateLimit: rateLimit || undefined,
     // One database file per room: rooms stay isolated, and a room can be
     // backed up, moved or deleted without touching the others.
     storage: async (room) => (memory

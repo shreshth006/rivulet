@@ -255,7 +255,12 @@ export class SyncEngine extends Emitter {
     this.#setStatus(Status.OFFLINE, { error: err?.message });
     this.emit('error', err);
 
-    const delay = backoffDelay(this.#attempt++, { maxMs: this.#opts.maxBackoffMs });
+    let delay = backoffDelay(this.#attempt++, { maxMs: this.#opts.maxBackoffMs });
+    // A server that says when to come back means it: jittered backoff alone
+    // would often retry early and be refused again.
+    if (err?.code === 'E_LIMIT' && Number.isFinite(err.details?.retryAfterMs)) {
+      delay = Math.max(delay, err.details.retryAfterMs);
+    }
     this.emit('retry', { attempt: this.#attempt, delayMs: delay });
     this.#schedule(delay);
   }
