@@ -23,6 +23,11 @@ call site. Being offline is an expected condition, not a failure.
 
 ---
 
+> **Reviewing or demoing the project?** [`docs/review-guide.md`](docs/review-guide.md)
+> explains everything from the ground up — what, why and how — and
+> [`docs/demo-handbook.md`](docs/demo-handbook.md) walks through every demo on
+> your own machine, Android included.
+
 ## Why this exists
 
 The usual architecture -- request, wait, render -- fails badly in exactly the

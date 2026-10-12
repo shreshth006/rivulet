@@ -2,11 +2,11 @@
 /**
  * A durable Node client talking to a real server over HTTP.
  *
- *   # terminal 1
- *   node --experimental-sqlite apps/cli/serve.js --port 8787
+ *   # terminal 1 (--open-schema: this client has its own schema)
+ *   node --experimental-sqlite apps/cli/serve.js --port 8787 --open-schema
  *
  *   # terminal 2
- *   node --experimental-sqlite examples/node-client.js --open-schema
+ *   node --experimental-sqlite examples/node-client.js
  *
  * State is kept in a SQLite file, so running it twice shows the restart path:
  * the replica keeps its identity, resumes its sequence numbering, and replays
