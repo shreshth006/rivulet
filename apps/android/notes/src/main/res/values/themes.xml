@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!--
+      Android 15 draws apps edge to edge, behind a transparent status bar. On
+      this light background its icons must be dark, or they disappear.
+    -->
+    <style name="Theme.Rivulet" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
+</resources>

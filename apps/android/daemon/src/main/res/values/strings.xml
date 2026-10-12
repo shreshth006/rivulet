@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Rivulet Sync</string>
+    <string name="permission_label">access offline-first synced data</string>
+    <!-- Android 12+ shows "Allow <app> to <description>?", so this reads as a verb phrase. -->
+    <string name="permission_description">keep its data available offline and synced with Rivulet Sync</string>
+</resources>

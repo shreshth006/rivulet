@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 296 tests, no dependencies
+npm test                                            # 300 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -68,6 +68,14 @@ both, then come back online. Nothing is lost and nothing asks you to choose.
 node --experimental-sqlite bench/run.js             # reproduce the evaluation
 node --experimental-sqlite bench/run.js bandwidth   # just one scenario
 ```
+
+## On Android
+
+[`apps/android`](apps/android/README.md) turns the engine into **Rivulet Sync**, a
+background daemon that gives any Android app offline-first synced storage
+through a ContentProvider, plus **Rivulet Notes**, an example app built on it.
+The daemon runs this same engine, unmodified, so encrypted rooms, vector deltas
+and everything else work there too. The sync server ships as a `Dockerfile`.
 
 ## Choosing a merge strategy
 
@@ -225,7 +233,7 @@ src/storage/    adapter contract + memory, SQLite and IndexedDB backends
 src/client/     sync engine, adaptive batching, transports
 src/server/     sync server core and its HTTP/SSE transport
 bench/          network simulator and the evaluation scenarios
-apps/           demo notebook and the server CLI
+apps/           demo notebook, server CLI, and the Android daemon (apps/android)
 examples/       runnable examples and interactive REPL (start with two-replicas.js or npm run repl)
 docs/           design documents, query guides, and correctness papers
 paper/          the write-up
@@ -238,7 +246,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (296 tests)
+npm test              # everything (300 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

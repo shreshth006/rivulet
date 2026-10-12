@@ -1,0 +1,10 @@
+.git
+node_modules
+data
+bench
+paper
+docs
+test
+examples
+apps/android
+**/*.test.js

@@ -176,6 +176,12 @@ export class HttpSyncServer {
     res.setHeader('access-control-allow-headers', 'content-type, authorization, content-encoding');
     res.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
     res.setHeader('vary', 'origin');
+    // Private Network Access: a page on a public or secure origin (a phone's
+    // WebView-hosted engine, say) asks before talking to a private address
+    // such as a LAN server. Answer for the origins already allowed above.
+    if (value && req.headers['access-control-request-private-network'] === 'true') {
+      res.setHeader('access-control-allow-private-network', 'true');
+    }
   }
 
   /** The bearer credential, if any -- passed through to the engine's hook. */

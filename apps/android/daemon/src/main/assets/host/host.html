@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Rivulet engine host</title>
+<!--
+  Never shown. The daemon's service loads this page in an off-screen WebView
+  so the engine runs exactly as it does in a browser: IndexedDB for storage,
+  WebCrypto for encrypted rooms, CompressionStream for the wire. The import
+  map mirrors package.json's `imports`; the engine source is copied into
+  assets/engine at build time.
+-->
+<script type="importmap">
+{
+  "imports": {
+    "#core/": "/engine/src/core/",
+    "#protocol/": "/engine/src/protocol/",
+    "#storage/": "/engine/src/storage/",
+    "#client/": "/engine/src/client/"
+  }
+}
+</script>
+</head>
+<body>
+<script type="module" src="/host/host.js"></script>
+</body>
+</html>

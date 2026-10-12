@@ -1,0 +1,20 @@
+# Local or single-host deployment of the sync server.
+#
+#   RIVULET_SECRET=$(openssl rand -hex 32) docker compose up -d
+#
+# With a secret set, every client needs a room token (npm run token).
+services:
+  rivulet:
+    build: .
+    image: rivulet-server
+    restart: unless-stopped
+    ports:
+      - "8787:8787"
+    volumes:
+      - rivulet-data:/data
+    environment:
+      RIVULET_SECRET: ${RIVULET_SECRET:-}
+    command: ${RIVULET_FLAGS:---open-schema}
+
+volumes:
+  rivulet-data:

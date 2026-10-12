@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Merged into every app that uses the library. -->
+    <uses-permission android:name="dev.rivulet.permission.ACCESS" />
+
+    <!-- Android 11+ hides other apps' providers unless they are declared. -->
+    <queries>
+        <provider android:authorities="dev.rivulet.sync.provider" />
+    </queries>
+</manifest>

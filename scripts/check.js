@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 const run = promisify(execFile);
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const SKIP = new Set(['node_modules', '.git', 'data', 'results', '.tmp']);
+const SKIP = new Set(['node_modules', '.git', 'data', 'results', '.tmp', 'build', '.gradle']);
 
 /** Every .js file in the project, excluding build and data directories. */
 async function sources(dir = ROOT, found = []) {

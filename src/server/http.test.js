@@ -117,7 +117,7 @@ test('a bearer token is enforced on both endpoints', async (t) => {
   t.after(() => good.close());
   good.mutate((tx) => tx.create('notes', { title: 'allowed' }));
   await good.syncUntilIdle();
-  assert.equal(good.status, 'live');
+  await good.waitForStatus('live');
 
   const bad = await connect(server, 'auth-bad', { token: 'wrong' });
   t.after(() => bad.close());
@@ -161,7 +161,8 @@ test('room tokens: a writer and a read-only follower share a room', async (t) =>
   await writer.syncUntilIdle();
   await reader.syncUntilIdle();
   assert.equal(reader.get('notes', id).title, 'shared read-only', 'a read token can pull');
-  assert.equal(reader.status, 'live');
+  // A stream nudge can start a round at any moment; wait for it to settle.
+  await reader.waitForStatus('live');
 
   // The follower writes anyway: the push is refused, and nothing reaches the room.
   reader.mutate((tx) => tx.create('notes', { title: 'should not land' }));
@@ -288,6 +289,17 @@ test('info and room endpoints report server metadata and room stats', async (t) 
   assert.equal(roomData.name, 'http-room');
 });
 
+
+test('a private-network preflight is answered for allowed origins', async (t) => {
+  const server = await serve();
+  t.after(() => server.close());
+  const preflight = await fetch(`${server.url}/v1/sync`, {
+    method: 'OPTIONS',
+    headers: { origin: 'https://appassets.androidplatform.net', 'access-control-request-private-network': 'true' },
+  });
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-private-network'), 'true');
+});
 
 test('unknown routes 404 rather than hanging', async (t) => {
   const server = await serve();
