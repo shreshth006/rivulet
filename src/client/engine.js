@@ -33,9 +33,11 @@
 
 import { Emitter, backoffDelay } from '#core/util';
 import { encodeOps, decodeOps } from '#protocol/codec';
-import { sync as syncMessage, hello, MessageType, validateMessage, readVector } from '#protocol/messages';
+import {
+  sync as syncMessage, hello, MessageType, validateMessage, readVector, applyVectorDelta,
+} from '#protocol/messages';
 import { AdaptiveBatcher } from '#client/adaptive';
-import { RivuletError, AuthError } from '#core/errors';
+import { RivuletError, AuthError, ProtocolError } from '#core/errors';
 
 /** @typedef {'offline'|'connecting'|'syncing'|'live'|'unauthorised'} Status */
 
@@ -319,9 +321,11 @@ export class SyncEngine extends Emitter {
 
     const outbox = await this.#log.outbox(node, { limit });
     const have = this.#log.frontier();
+    // The last frontier the server numbered for us: send only how we differ.
+    const base = (await this.#log.serverBase()) ?? undefined;
 
     const request = syncMessage({
-      node, room: this.#room, have,
+      node, room: this.#room, have, base,
       push: outbox.length ? this.#codec.encode(outbox) : undefined,
       limit,
       schema: this.#schema,
@@ -354,7 +358,16 @@ export class SyncEngine extends Emitter {
       }
     }
 
-    await this.#log.setServerFrontier(readVector(reply));
+    let serverHave;
+    if (reply.hd !== undefined) {
+      if (reply.hd !== base?.version) {
+        throw new ProtocolError('reply is a delta against a base this replica did not send', { hd: reply.hd });
+      }
+      serverHave = applyVectorDelta(base.vector, reply.have ?? {});
+    } else {
+      serverHave = readVector(reply);
+    }
+    await this.#log.setServerFrontier(serverHave, reply.hv);
     this.#batcher.record({ ops: outbox.length + applied, ms: elapsed });
 
     // Still dirty if the server did not take everything we had queued.

@@ -462,20 +462,33 @@ before tombstones are collected, not only after.
 
 Replicas each making 40 edits to 8 shared documents:
 
-| Replicas | Total traffic | Per replica | Per edit | Idle sync request |
-|--:|--:|--:|--:|--:|
-| 2 | 4.4 kB | 2.20 kB | 54.9 B | 125 B |
-| 4 | 10.3 kB | 2.57 kB | 64.1 B | 123 B |
-| 8 | 32.8 kB | 4.10 kB | 102.5 B | 165 B |
-| 16 | 107.5 kB | 6.72 kB | 167.9 B | 248 B |
-| 32 | 365.1 kB | 11.41 kB | 285.2 B | 401 B |
+| Replicas | Total traffic | Per replica | Per edit | Idle request | Idle reply | Full-vector request |
+|--:|--:|--:|--:|--:|--:|--:|
+| 2 | 4.2 kB | 2.1 kB | 53 B | 188 B | 115 B | 191 B |
+| 4 | 9.7 kB | 2.4 kB | 61 B | 189 B | 116 B | 217 B |
+| 8 | 29.2 kB | 3.7 kB | 91 B | 188 B | 116 B | 263 B |
+| 16 | 90.1 kB | 5.6 kB | 141 B | 191 B | 116 B | 351 B |
+| 32 | 287.5 kB | 9.0 kB | 225 B | 191 B | 116 B | 514 B |
 
 Total traffic is quadratic in replica count, as it must be when every replica
-receives every other's work. The number that bounds practical sharing is the
-last column: a version vector carries an entry per replica, so a fully
-caught-up replica still sends 401 bytes at 32 replicas. This is adequate for a
-team and inadequate for a document shared with a hundred thousand people, which
-delimits the design's applicability.
+receives every other's work. A version vector carries an entry per replica, and
+sent whole — in every request and echoed in every reply — it makes even an idle
+poll grow with the room: the last column, 514 bytes at 32 replicas.
+
+The protocol therefore sends vectors as deltas. The server numbers each
+frontier it reports and keeps the last 256 per room in memory; a client names
+the last one it received and sends only the entries where it differs, and the
+reply is a delta against the same base. An idle round is then flat at about
+190 bytes up and 116 down. A base the server has forgotten is answered with the
+full vector and a retry, which costs a round trip and never correctness. Over
+the whole run, deltas cut total traffic by 4.5% at 2 replicas and 21% at 32
+(365.1 kB before).
+
+This moves the bound rather than removing it. A client that is behind still
+sends an entry per replica it is behind on, every operation still names its
+replica, and the server still stores a vector per room. It is adequate for a
+team or a class and still inadequate for a document shared with a hundred
+thousand people.
 
 ## 6.7 Batch sizing
 
@@ -551,9 +564,10 @@ results rather than as design.
   and access is controlled per room by signed, scoped tokens; there is no
   end-to-end encryption, no per-user identity and no revocation short of
   expiry. The server sees plaintext.
-- **Metadata is linear in replica count**, bounding practical sharing (§6.6).
-  Compressed vector encodings or server-assigned sequence positions would
-  extend that bound.
+- **Metadata is per replica** (§6.6). Vector deltas keep an idle poll flat, but
+  a lagging client's request and every replica's stored state still grow with
+  the number of replicas. Server-assigned sequence positions would make the
+  pull cursor a single integer, at the cost of a storage migration.
 - **Text merging is character-level, not intent-level.** Two people rewriting
   the same sentence receive a correct merge that may read badly. No CRDT solves
   this; it is why a multi-value type is offered.

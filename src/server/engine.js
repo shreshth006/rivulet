@@ -27,10 +27,47 @@ import { VersionVector } from '#core/version-vector';
 import { decodeOps, encodeOps } from '#protocol/codec';
 import {
   MessageType, DEFAULT_LIMITS, ack, welcome, errorMessage,
-  validateMessage, readVector, assertSchemaMatch,
+  validateMessage, readVector, assertSchemaMatch, applyVectorDelta,
 } from '#protocol/messages';
 import { newNodeId } from '#core/ids';
 import { AuthError, ProtocolError, ValidationError, RivuletError, LimitError } from '#core/errors';
+
+/** How many recent frontiers a room remembers as delta bases. */
+const FRONTIER_RING = 256;
+
+/**
+ * The numbered frontiers a room has reported, so a client can name one as the
+ * base for a vector delta instead of resending the whole vector. See "Vector
+ * deltas" in `#protocol/messages`.
+ *
+ * In memory only, and bounded: forgetting a base costs a client one extra
+ * round trip, so there is nothing here worth persisting. The epoch is fresh
+ * per process, so an id from before a restart can never match a different
+ * frontier that happens to reuse its number.
+ */
+class FrontierVersions {
+  #epoch = newNodeId();
+  #next = 0;
+  /** @type {Map<string, VersionVector>} insertion order is age */
+  #ring = new Map();
+  #latest = null;
+  #latestKey = null;
+
+  /** The id for `frontier`, minting a new one only when it has moved. */
+  versionOf(frontier) {
+    const key = JSON.stringify(frontier.toJSON());
+    if (key === this.#latestKey) return this.#latest;
+    const id = `${this.#epoch}.${(this.#next++).toString(36)}`;
+    this.#ring.set(id, frontier.clone());
+    if (this.#ring.size > FRONTIER_RING) this.#ring.delete(this.#ring.keys().next().value);
+    this.#latest = id;
+    this.#latestKey = key;
+    return id;
+  }
+
+  /** @returns {VersionVector|undefined} */
+  get(id) { return this.#ring.get(id); }
+}
 
 /** A room is one synchronisation domain: one shared operation log. */
 class Room extends Emitter {
@@ -42,6 +79,7 @@ class Room extends Emitter {
     /** @type {Set<(ops: object[], from: string) => void>} live listeners */
     this.listeners = new Set();
     this.lastActivity = Date.now();
+    this.versions = new FrontierVersions();
   }
 
   /**
@@ -244,18 +282,32 @@ export class SyncServer extends Emitter {
     }
 
     /* ---- pull ---- */
-    const clientHas = readVector(msg);
-    const limit = Math.min(msg.limit ?? this.#limits.maxOpsPerPull, this.#limits.maxOpsPerPull);
-    const { ops: outgoing, more } = await room.log.delta(clientHas, { limit });
+    const frontier = room.log.frontier();
+    const version = room.versions.versionOf(frontier);
+    const baseVector = msg.bv === undefined ? undefined : room.versions.get(msg.bv);
+
+    let outgoing = [], more = false;
+    if (msg.bv !== undefined && !baseVector) {
+      // A base we no longer hold: we cannot know what the client has, so send
+      // the full frontier and a fresh id, and let it ask again. Its push above
+      // has already been taken; only the pull waits a round.
+      more = true;
+    } else {
+      const clientHas = baseVector ? applyVectorDelta(baseVector, msg.have ?? {}) : readVector(msg);
+      const limit = Math.min(msg.limit ?? this.#limits.maxOpsPerPull, this.#limits.maxOpsPerPull);
+      ({ ops: outgoing, more } = await room.log.delta(clientHas, { limit }));
+    }
 
     return ack({
       node: this.node,
       accepted, duplicates, rejected,
       pull: outgoing.length ? this.#codec.encode(outgoing) : undefined,
-      have: room.log.frontier(),
+      have: frontier,
+      version,
+      base: baseVector ? { version: msg.bv, vector: baseVector } : undefined,
       // How far the client's own history has been durably accepted. The client
       // advances its outbox watermark to exactly this and no further.
-      you: room.log.frontier().get(msg.node),
+      you: frontier.get(msg.node),
       more,
       serverTs: Date.now(),
     });

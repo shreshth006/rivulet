@@ -227,10 +227,13 @@ so its size depends on how many replicas have ever written to the room:
 | 4 | 133 B |
 | 32 | 466 B |
 
-That is the floor a polling client pays, and the reason §12 says metadata is
-linear in replica count. The benchmark in `bench/results/scale.json` measures
-the same thing against real logs and gets 125 B at two replicas and 401 B at
-thirty-two.
+That is what a request carrying the whole vector costs, and it grows with the
+replica count. In practice the engine sends the vector as a delta against the
+last frontier the server numbered (see "Sending only what changed" in
+`docs/03-sync-protocol.md`), so a caught-up client's `have` is `{}`. The
+benchmark in `bench/results/scale.md` measures a real idle round: about 190 B
+up and 116 B down whether the room has two replicas or thirty-two, against 191
+to 514 B for the full-vector request.
 
 ### Stage 9 — the server (`SyncServer.handleSync`)
 
@@ -474,9 +477,13 @@ than live ones. Collection recovers 97–99.9%, but only below a timestamp every
 replica has seen.
 
 **What does this cost that a normal database does not?**
-Metadata linear in replica count — an idle sync request is 125 bytes at 2
-replicas and 401 at 32. Fine for a team; wrong for a document shared with a
-hundred thousand people.
+Per-replica metadata. Every operation names its replica, every replica that
+ever wrote keeps an entry in the vector, and that vector is stored and compared
+on both sides. Vector deltas keep an idle poll flat (about 190 bytes up,
+whatever the replica count), but a client that is behind still sends an entry
+per replica it is behind on, and the server holds the whole vector per room.
+Fine for a team, or a class; still not a document shared with a hundred
+thousand people.
 
 **Where does this design not help?**
 On a fast network. Convergence improves 2.21× on a 128 kbps link and **1.01×**

@@ -9,9 +9,11 @@
  * Two things are watched. **Traffic per replica** should stay roughly flat --
  * each replica sends its own work and receives everyone else's, so total
  * traffic grows with the number of replicas but the per-replica share should
- * not. **Sync request size when idle** is the pure metadata cost: a version
- * vector grows linearly with replica count, and a replica that is fully caught
- * up sends nothing but that vector.
+ * not. **Sync size when idle** is the pure metadata cost: a version vector
+ * grows linearly with replica count, and a replica that is fully caught up
+ * sends nothing but its frontier. With vector deltas (see `#protocol/messages`)
+ * it sends only how that frontier differs from the last one the server
+ * numbered, so the full-vector request is measured alongside for comparison.
  */
 
 import { buildCluster, converged } from '#bench/netsim/harness';
@@ -50,9 +52,15 @@ async function runOnce({ replicas, editsEach, documents, profile, seed }) {
     const result = await cluster.converge({ maxSimMs: 30 * 60_000 });
     const net = cluster.network;
 
-    // The pure metadata cost: what a fully caught-up replica still has to send.
-    const idleFrame = await packMessage(syncMessage({
+    // The pure metadata cost: one real sync round from a fully caught-up
+    // replica, both directions, as the engine actually sends it...
+    author.link.reset();
+    await cluster.clock.drive(author.sync());
+    const idle = author.link.stats;
+    // ...and the same request with the whole vector, as before vector deltas.
+    const fullFrame = await packMessage(syncMessage({
       node: author.node, room: 'bench', have: author.log.frontier(), limit: 500,
+      schema: notebookSchema.fingerprint,
     }));
 
     return {
@@ -60,7 +68,9 @@ async function runOnce({ replicas, editsEach, documents, profile, seed }) {
       bytes: net.totalBytes,
       bytesPerReplica: net.totalBytes / replicas,
       requests: net.requests,
-      idleBytes: idleFrame.wireBytes,
+      idleUp: idle.bytesUp,
+      idleDown: idle.bytesDown,
+      fullVectorBytes: fullFrame.wireBytes,
       converged: result.converged && converged(cluster.clients, 'notes'),
     };
   } finally {
@@ -82,7 +92,9 @@ export async function run({ seed = 5, editsEach = 40, documents = 8 } = {}) {
       bytes: r.bytes,
       bytesPerReplica: r.bytesPerReplica,
       bytesPerEdit: r.bytes / (replicas * editsEach),
-      idleBytes: r.idleBytes,
+      idleUp: r.idleUp,
+      idleDown: r.idleDown,
+      fullVectorBytes: r.fullVectorBytes,
       requests: r.requests,
       ok: r.converged,
     });
@@ -96,15 +108,19 @@ export async function run({ seed = 5, editsEach = 40, documents = 8 } = {}) {
       { key: 'bytes', label: 'Total', format: fmt.bytes },
       { key: 'bytesPerReplica', label: 'Per replica', format: fmt.bytes },
       { key: 'bytesPerEdit', label: 'Per edit', format: (n) => `${n.toFixed(0)} B` },
-      { key: 'idleBytes', label: 'Idle sync', format: (n) => `${n} B` },
+      { key: 'idleUp', label: 'Idle request', format: (n) => `${n} B` },
+      { key: 'idleDown', label: 'Idle reply', format: (n) => `${n} B` },
+      { key: 'fullVectorBytes', label: 'Full-vector request', format: (n) => `${n} B` },
       { key: 'requests', label: 'Requests', format: fmt.int },
       { key: 'ok', label: 'Converged', format: (v) => (v ? 'yes' : 'NO') },
     ],
     rows,
-  }, '"Idle sync" is one request from a fully caught-up replica: version '
-   + 'vector only, no operations. It is the per-replica metadata floor, and '
-   + 'the number that would eventually limit how widely a document can be '
-   + 'shared before polling alone becomes expensive.');
+  }, '"Idle request" and "Idle reply" are one sync round from a fully '
+   + 'caught-up replica: no operations, only frontiers. That is the metadata '
+   + 'floor every poll pays. With vector deltas both are sent relative to the '
+   + 'last frontier the server numbered, so they stay flat as the room grows; '
+   + '"Full-vector request" is the same request carrying the whole vector, '
+   + 'which is what it cost before.');
 
   return report;
 }

@@ -32,6 +32,7 @@ const META = Object.freeze({
   LAST_TS: 'lastTs',       // HLC high-water mark, so a restart cannot rewind
   PUSHED: 'pushedSeq',     // outbox watermark: local seq the server has acked
   SERVER_HAVE: 'serverHave', // last known server frontier, to skip no-op syncs
+  SERVER_BASE: 'serverBase', // that frontier with the server's id for it: a delta base
   SCHEMA: 'schema',        // fingerprint, to detect an app upgrade
 });
 
@@ -215,7 +216,24 @@ export class OpLog extends Emitter {
   }
 
   async serverFrontier() { return VersionVector.fromJSON((await this.getMeta(META.SERVER_HAVE)) ?? {}); }
-  async setServerFrontier(vv) { await this.setMeta(META.SERVER_HAVE, vv.toJSON()); }
+
+  /**
+   * @param {VersionVector} vv
+   * @param {string} [version] the server's id for `vv`, if it numbers frontiers
+   */
+  async setServerFrontier(vv, version) {
+    await this.setMeta(META.SERVER_HAVE, vv.toJSON());
+    // The id and the vector it names are stored as one value. Stored apart, a
+    // crash between the writes could pair an id with the wrong vector, and the
+    // server would then believe this replica holds operations it does not.
+    await this.setMeta(META.SERVER_BASE, version ? { v: version, h: vv.toJSON() } : undefined);
+  }
+
+  /** @returns {Promise<{ version: string, vector: VersionVector }|null>} */
+  async serverBase() {
+    const base = await this.getMeta(META.SERVER_BASE);
+    return base?.v ? { version: base.v, vector: VersionVector.fromJSON(base.h) } : null;
+  }
 
   /**
    * Compare the stored schema fingerprint with the running one.

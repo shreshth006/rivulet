@@ -24,6 +24,26 @@
  * Every message is safe to retry. A pushed operation that the server already
  * holds is counted and ignored, so the client can resend freely after a
  * timeout without risking duplicates.
+ *
+ * ## Vector deltas
+ *
+ * A version vector has an entry per replica that ever wrote to the room, and
+ * a naive sync sends the whole thing both ways on every request -- so the cost
+ * of a sync that changes nothing grows with how widely a room is shared.
+ *
+ * Instead the server numbers the frontiers it reports (`hv`, an opaque id such
+ * as `k3x9.41`). A client that remembers the last one sends it back as `bv`,
+ * with `have` holding only the entries where its own frontier differs from
+ * that base; the reply's `have` is likewise only what moved since the base,
+ * marked by `hd`. A caught-up client exchanges two empty objects whatever the
+ * replica count.
+ *
+ * The server keeps a bounded ring of recent frontiers per room, in memory. A
+ * base it no longer holds -- after a restart, or a client that slept through
+ * many writes -- is answered with the full frontier, a fresh `hv` and `more`,
+ * so the client's next round is compact again. That costs one extra round
+ * trip, never correctness. Either side omitting the fields gets the plain
+ * full-vector protocol, so old clients and old servers interoperate.
  */
 
 import { ProtocolError, ValidationError } from '#core/errors';
@@ -86,12 +106,13 @@ export function welcome({ node, room, limits = DEFAULT_LIMITS, compression = nul
  * @param {object} [args.push] encoded operation batch
  * @param {number} [args.limit] maximum operations to receive in the reply
  */
-export function sync({ node, room, have, push, limit, schema }) {
+export function sync({ node, room, have, base, push, limit, schema }) {
   return {
     t: MessageType.SYNC,
     pv: PROTOCOL_VERSION,
     node, room,
-    have: have?.toJSON?.() ?? have ?? {},
+    // With a base, `have` is the delta against it -- see "Vector deltas".
+    ...(base ? { bv: base.version, have: vectorDelta(have, base.vector) } : { have: have?.toJSON?.() ?? have ?? {} }),
     ...(push ? { push } : {}),
     ...(limit ? { limit } : {}),
     ...(schema ? { schema } : {}),
@@ -106,8 +127,14 @@ export function sync({ node, room, have, push, limit, schema }) {
  * @param {object} [args.pull] encoded batch for the client
  * @param {number} [args.you] the client's own durably-accepted sequence frontier
  * @param {boolean} [args.more] true when another round is needed to finish
+ * @param {string} [args.version] id of the frontier in `have`, for the client's next `bv`
+ * @param {{ version: string, vector: VersionVector }} [args.base] the client's
+ *   base, when the server still holds it: `have` is then sent as a delta
  */
-export function ack({ node, accepted = 0, duplicates = 0, rejected = [], pull, have, more = false, you = 0, serverTs }) {
+export function ack({
+  node, accepted = 0, duplicates = 0, rejected = [], pull, have, more = false, you = 0, serverTs,
+  version, base,
+}) {
   return {
     t: MessageType.ACK,
     pv: PROTOCOL_VERSION,
@@ -116,7 +143,8 @@ export function ack({ node, accepted = 0, duplicates = 0, rejected = [], pull, h
     dup: duplicates,
     ...(rejected.length ? { bad: rejected } : {}),
     ...(pull ? { pull } : {}),
-    have: have?.toJSON?.() ?? have ?? {},
+    ...(base ? { hd: base.version, have: vectorDelta(have, base.vector) } : { have: have?.toJSON?.() ?? have ?? {} }),
+    ...(version ? { hv: version } : {}),
     // How far the client's own history is durably stored. The client advances
     // its outbox watermark to exactly this, so a partially accepted push
     // retries only the part that did not land.
@@ -180,6 +208,9 @@ export function validateMessage(msg, expected) {
       if (msg.have !== undefined && (typeof msg.have !== 'object' || msg.have === null)) {
         throw new ProtocolError('have must be a version vector object', { have: msg.have });
       }
+      if (msg.bv !== undefined && (typeof msg.bv !== 'string' || msg.bv.length === 0 || msg.bv.length > 64)) {
+        throw new ProtocolError('bv must be a frontier version id', { bv: msg.bv });
+      }
       if (msg.limit !== undefined && (!Number.isInteger(msg.limit) || msg.limit < 1)) {
         throw new ProtocolError('limit must be a positive integer', { limit: msg.limit });
       }
@@ -217,6 +248,38 @@ export function safeParseMessage(jsonString, expectedType) {
 export function readVector(msg) {
   try {
     return VersionVector.fromJSON(msg?.have ?? {});
+  } catch (err) {
+    throw new ProtocolError('malformed version vector', { cause: String(err) });
+  }
+}
+
+/**
+ * The entries of `full` that differ from `base`. A replica in `base` that
+ * `full` lacks is sent as 0, so the receiver drops it rather than inheriting it.
+ * @param {VersionVector|Record<string, number>} full
+ * @param {VersionVector} base
+ * @returns {Record<string, number>}
+ */
+export function vectorDelta(full, base) {
+  const vv = full instanceof VersionVector ? full : VersionVector.fromJSON(full);
+  /** @type {Record<string, number>} */
+  const out = {};
+  for (const [node, seq] of vv.entries()) if (base.get(node) !== seq) out[node] = seq;
+  for (const node of base.nodes()) if (vv.get(node) === 0) out[node] = 0;
+  return Object.fromEntries(Object.entries(out).sort((a, b) => (a[0] < b[0] ? -1 : 1)));
+}
+
+/** Rebuild a full vector from a base and a {@link vectorDelta}. */
+export function applyVectorDelta(base, delta) {
+  if (!delta || typeof delta !== 'object') throw new ProtocolError('malformed vector delta', { delta });
+  const out = base.toJSON();
+  for (const [node, seq] of Object.entries(delta)) {
+    if (!Number.isInteger(seq) || seq < 0) throw new ProtocolError('malformed vector delta', { node, seq });
+    if (seq === 0) delete out[node];
+    else out[node] = seq;
+  }
+  try {
+    return VersionVector.fromJSON(out);
   } catch (err) {
     throw new ProtocolError('malformed version vector', { cause: String(err) });
   }

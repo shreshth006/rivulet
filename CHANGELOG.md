@@ -13,6 +13,22 @@
   version-1 snapshots already in storage continue to load.
 - `bench/scenarios/overhead.js` reports plain and compact snapshot sizes side by side.
 
+### Sync Protocol
+
+- Vector deltas. Every `ack` carries `hv`, an id for the server frontier it
+  reports; a client sends it back as `bv` with `have` holding only the entries
+  that differ, and the reply's `have` is a delta against the same base (`hd`).
+  A caught-up client's idle round is now ~190 B up and ~116 B down at any
+  replica count (a full-vector request was 514 B at 32 replicas), and total
+  traffic in the 32-replica benchmark falls 21%.
+- The server keeps the last 256 numbered frontiers per room in memory. An
+  unknown base is answered with the full frontier and `more`, costing one round
+  trip. Old clients and old servers interoperate with the plain protocol.
+- The client stores the base id and its vector as a single meta value
+  (`serverBase`), so a crash cannot pair an id with the wrong vector.
+- `bench/scenarios/scale.js` measures a real idle round in both directions,
+  next to the full-vector request.
+
 ### Security
 
 - Room-scoped access tokens (`src/server/tokens.js`): stateless HMAC-SHA256

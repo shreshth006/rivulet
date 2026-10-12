@@ -65,6 +65,39 @@ replica in steady state) and advertises only the prefix. Gaps heal on their own 
 the next pull starts at the hole and re-sends the rest, and the duplicates are
 discarded by the log.
 
+### Sending only what changed
+
+A vector has an entry per replica that ever wrote to the room, so sending it
+whole makes even a no-op poll grow with how widely the room is shared — and the
+reply carries the server's vector back the same way.
+
+So the server numbers the frontiers it reports. Each `ack` carries `hv`, an
+opaque id (`<random epoch>.<counter>`) for the frontier in its `have`. The
+client stores that id together with the vector, as one value, and on its next
+`sync` sends `bv: <id>` with `have` holding only the entries where its own
+frontier differs from that base — including entries *below* it, and 0 for a
+replica the base has and it does not. The server rebuilds the full vector from
+its copy of the base. The reply's `have` is likewise only what moved since the
+base, marked `hd: <id>`; a client that receives a delta against an id it did
+not send treats it as a protocol error rather than guessing.
+
+```json
+{ "t": "sync", "bv": "6f0e…c2.1k", "have": {} }
+```
+
+That is a fully caught-up client, at any replica count. A client that is behind
+sends one entry per replica it is behind on, so the cost follows activity
+rather than membership.
+
+The server keeps the last 256 numbered frontiers per room, in memory. A base it
+no longer holds — after a restart, or from a client that slept through more
+than 256 changes — is answered with the full frontier, a fresh `hv`, no pull
+and `more: true`. The client's next round is compact again. That is one extra
+round trip, never a wrong answer: the server never guesses what a client has.
+
+Either side leaving the fields out gets the plain protocol, so old clients and
+old servers interoperate.
+
 ## Idempotence, and why it matters more than it sounds
 
 Every message is safe to retry. A pushed operation the server already holds is

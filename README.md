@@ -56,7 +56,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 275 tests, no dependencies
+npm test                                            # 281 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -194,9 +194,13 @@ Stated plainly, because they bound where this is the right tool:
   safe. Under a deliberately hostile rewrite workload they outnumber live
   characters by up to 759×. Collection recovers 97–99.9%, but requires knowing
   what every replica has seen.
-- **Metadata grows with replica count.** A version vector has an entry per
-  replica: an idle sync request is 125 B at 2 replicas and 401 B at 32. Fine for
-  a team, not for a document shared with a hundred thousand people.
+- **Per-replica metadata.** A version vector has an entry per replica. Syncs
+  send it as a delta against the last frontier the server numbered, so an idle
+  poll stays about 190 B whatever the replica count (a full vector was 514 B at
+  32). But a client that is behind sends an entry per replica it is behind on,
+  a server restart costs one extra round trip, and stored state still grows
+  with replicas. Fine for a team, not for a document shared with a hundred
+  thousand people.
 - **Adaptive batching does not beat a well-chosen constant.** It gets within
   1.29–1.71× of the best fixed size without being told which network it is on,
   while the worst plausible fixed choice is 2.2–286× off. If you know your
@@ -232,7 +236,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (275 tests)
+npm test              # everything (281 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance
