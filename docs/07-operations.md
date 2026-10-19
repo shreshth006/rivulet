@@ -112,6 +112,10 @@ only the rooms their token covers.
   `--no-rate-limit`.
 - **SSE connections hold a socket each.** A room with many live viewers needs
   the file-descriptor limit raised.
+- **Process termination.** On container teardown (e.g. Docker or Kubernetes
+  rolling updates), allowing the server a brief grace period (5–10 s) lets active
+  HTTP sync requests complete and cleanly closes push streams before SQLite file
+  descriptors are released.
 - **`synchronous = NORMAL`** means an OS crash can lose recently committed
   operations. They are resent by the replicas that produced them, but a client
   that was itself wiped between sync and crash loses them.
