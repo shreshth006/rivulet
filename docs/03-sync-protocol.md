@@ -200,7 +200,9 @@ else, and the engine degrades to polling without noticing.
 
 This is deliberate. A half-working stream is the normal condition behind a
 captive portal or a mobile NAT, and a design that depended on it would fail
-exactly where this project is aimed.
+exactly where this project is aimed. Furthermore, when intermediate middleboxes
+or edge proxies buffer event stream chunks, the client remains protected by
+retaining baseline polling until a live ready frame verifies unbuffered delivery.
 
 ## Security boundary
 

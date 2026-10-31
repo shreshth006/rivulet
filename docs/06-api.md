@@ -79,6 +79,9 @@ keystroke rather than a full replacement.
 
 Operations are validated against the schema at the call site, so writing a
 counter with `set` throws immediately rather than merging strangely later.
+Transactions are atomic locally: if an uncaught exception is thrown inside a
+`client.mutate` callback, staged operations from that callback are aborted and
+never appended to the local log.
 
 ## Sync
 

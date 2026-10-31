@@ -137,4 +137,10 @@ const isConflicted = client.hasConflict('notes', id);
 
 // Retrieve all conflicted documents across a collection
 const conflicts = client.conflicts('notes');
+
+// Resolving a conflict is a standard mutation:
+// writing a chosen value supersedes the concurrent siblings
+client.mutate((tx) => {
+  tx.set('notes', id, 'estimate', '3d');
+});
 ```

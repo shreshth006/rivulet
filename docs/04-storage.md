@@ -58,6 +58,8 @@ Two pragma choices are workload-specific:
   throughput at the disk's fsync rate for no real benefit: an operation lost to
   an OS crash is still held by the replica that produced it and will be resent
   on the next sync. The log is redundant by construction.
+- **Passive WAL checkpoints**, which flush committed frames during idle moments
+  without locking out concurrent readers or delaying the write path.
 
 ## IndexedDB
 
