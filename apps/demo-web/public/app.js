@@ -218,6 +218,7 @@ function renderEditor() {
     remove.type = 'button';
     remove.textContent = '×';
     remove.title = `Remove ${tag}`;
+    remove.hidden = !canWrite;
     remove.onclick = () => write((tx) => tx.remove('notes', selectedId, 'tags', tag));
     span.append(remove);
     return span;
