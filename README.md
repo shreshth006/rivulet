@@ -61,7 +61,7 @@ Requires **Node 22.5+** (for the built-in `node:sqlite`). Nothing to install.
 
 ```bash
 git clone <this repo> && cd rivulet
-npm test                                            # 300 tests, no dependencies
+npm test                                            # 314 tests, no dependencies
 npm run repl                                        # interactive terminal REPL
 node --experimental-sqlite apps/cli/serve.js --demo # http://127.0.0.1:8787
 ```
@@ -81,6 +81,27 @@ background daemon that gives any Android app offline-first synced storage
 through a ContentProvider, plus **Rivulet Notes**, an example app built on it.
 The daemon runs this same engine, unmodified, so encrypted rooms, vector deltas
 and everything else work there too. The sync server ships as a `Dockerfile`.
+
+## Accounts, sharing and an admin console
+
+Started with `--accounts`, the server becomes a multi-user notebook service:
+people sign in with a username and password, keep several notebooks, and share
+each one with other users by username as an **editor** or a **viewer**. An
+**admin console** (`/admin.html`) manages accounts and roles, lists every
+notebook with its sync statistics, and shows the audit log and the database
+schema.
+
+```bash
+RIVULET_ADMIN_PASSWORD=change-me npm run serve -- --demo --accounts
+```
+
+Accounts live in their own SQLite database next to the operation logs, with
+the integrity rules in the schema itself: foreign keys that cascade, `CHECK`
+constraints, a trigger that makes every owner a member and two that refuse to
+remove the last admin. Access is checked against the live session on every
+sync, so removing someone takes effect on their next request. Design, schema
+and API: [`docs/10-accounts-and-admin.md`](docs/10-accounts-and-admin.md).
+`render.yaml` deploys it to Render from this repository.
 
 ## Choosing a merge strategy
 
@@ -140,7 +161,8 @@ Further reading: **[how it works, end to end](docs/00-how-it-works.md)** ·
 [storage](docs/04-storage.md) ·
 [evaluation method](docs/05-evaluation.md) ·
 [querying](docs/08-querying.md) ·
-[fuzzing and correctness](docs/09-fuzzing-and-correctness.md)
+[fuzzing and correctness](docs/09-fuzzing-and-correctness.md) ·
+[accounts and admin](docs/10-accounts-and-admin.md)
 
 ## Evaluation
 
@@ -222,8 +244,9 @@ Stated plainly, because they bound where this is the right tool:
   only who wrote, when and roughly how much, never what, at 1.3–1.75× the bytes
   on the wire. Everyone in the room shares the key, there is no key rotation,
   and the server cannot compact an encrypted room. Access is controlled per
-  room with signed, scoped tokens; there is no per-user identity beyond what
-  the token issuer encodes, and no revocation short of expiry.
+  notebook through accounts (revoked on the next sync) or per room with signed,
+  scoped tokens (revoked only by expiry); the room key itself cannot be taken
+  back from someone who had it.
 - **Text merging is character-level, not intent-level.** Two people rewriting
   the same sentence get a correct merge that may still read badly. No CRDT
   fixes that; it is why `mv` exists.
@@ -236,9 +259,9 @@ src/core/       clocks, version vectors, CRDT types, document model
 src/protocol/   operation codec, messages, framing, compression
 src/storage/    adapter contract + memory, SQLite and IndexedDB backends
 src/client/     sync engine, adaptive batching, transports
-src/server/     sync server core and its HTTP/SSE transport
+src/server/     sync server core, its HTTP/SSE transport, accounts and the admin API
 bench/          network simulator and the evaluation scenarios
-apps/           demo notebook, server CLI, and the Android daemon (apps/android)
+apps/           notebook app and admin console, server CLI, and the Android daemon (apps/android)
 examples/       runnable examples and interactive REPL (start with two-replicas.js or npm run repl)
 docs/           design documents, query guides, and correctness papers
 paper/          the write-up
@@ -251,7 +274,7 @@ to manipulate multi-replica databases in real time.
 ## Testing
 
 ```bash
-npm test              # everything (300 tests)
+npm test              # everything (314 tests)
 npm run test:core     # CRDT laws and core data structures
 npm run test:fuzz     # random interleaved concurrent execution and fuzzing
 npm run test:storage  # storage adapter conformance

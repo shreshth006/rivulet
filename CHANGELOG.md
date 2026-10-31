@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+### Accounts and the admin console
+
+- `--accounts`: username-and-password accounts, several notebooks per user,
+  sharing by username as editor or viewer, and an admin console at
+  `/admin.html` (overview, users, notebooks with sync statistics, audit log,
+  database schema). Accounts live in `accounts.db`, a normalised SQLite schema
+  that enforces its own rules: cascading foreign keys, `CHECK` constraints, a
+  trigger that makes every owner a member and two that keep an active admin.
+- Passwords are scrypt hashes; sessions are HttpOnly cookies stored as SHA-256
+  hashes; every change must be JSON, which closes cross-site form posts; sign-in
+  is rate limited per address. Sync requests carry a token derived from the
+  session and are checked against it on every request, so revocation is
+  immediate. Signed room tokens keep working alongside.
+- The notebook app signs in, switches notebooks, creates encrypted ones and
+  shares them. Viewers get a read-only page.
+- `render.yaml` deploys the Docker image to Render; `RIVULET_FLAGS` passes
+  server flags through the environment; the admin and an optional demo account
+  (with three sample notes, written by a real replica over HTTP) are seeded
+  from `RIVULET_ADMIN_*` and `RIVULET_DEMO_*`.
+- `docs/10-accounts-and-admin.md`: schema, ER diagram, authorisation flow, API.
+  14 new tests (314 in total).
+
 ### Android
 
 - `apps/android`: **Rivulet Sync**, a background daemon that gives any Android

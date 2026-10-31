@@ -62,8 +62,10 @@ carries them over bad links:
 - a batch-size controller that tells congestion apart from packet loss.
 
 Around that engine the project now has room-scoped access tokens, end-to-end
-encryption, rate limiting, compact snapshots, and an **Android background
-daemon** that gives any Android app offline-first synced storage.
+encryption, rate limiting, compact snapshots, an **Android background
+daemon** that gives any Android app offline-first synced storage, and
+**user accounts** with notebooks shared by username and an **admin console**
+([`10-accounts-and-admin.md`](10-accounts-and-admin.md)).
 
 It has **zero runtime dependencies** and runs in Node and the browser from the
 same source. There are 300 automated tests.
@@ -653,6 +655,7 @@ Decisions made in phases 2 and 3, and why:
 | 2026-10-05 | Repository made public. |
 | 2026-10-12 | **Phase 2, hardening:** compact snapshots, room tokens, vector deltas, the append fix, end-to-end encryption, rate limiting, encrypted rooms in the demo. |
 | 2026-10-12 | **Phase 3, Android:** Rivulet Sync, the client library, Rivulet Notes, Docker deployment, and the live-update engine fixes. |
+| 2026-10-31 | **Phase 4, accounts:** users and roles, sessions, notebooks shared by username, the admin console, the relational `accounts.db` schema (foreign keys, checks, triggers, views), and the Render deployment. |
 
 The repository has 210+ commits. Every feature commit was tested at that commit.
 

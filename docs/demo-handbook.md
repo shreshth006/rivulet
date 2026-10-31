@@ -441,6 +441,29 @@ or deploy the server behind https (§9), which needs no change.
 
 ---
 
+## 11. Accounts and the admin console
+
+```bash
+RIVULET_ADMIN_PASSWORD=admin-pass-1 RIVULET_DEMO_USER=demo RIVULET_DEMO_PASSWORD=demo-pass-1 \
+  npm run serve -- --demo --accounts --memory
+```
+
+1. Open <http://127.0.0.1:8787/> and sign in as `demo` / `demo-pass-1`. The
+   *Getting started* notebook already holds three notes.
+2. In a private window, create an account (say `friend`). Back as `demo`, click
+   **Share**, add `friend` as *can view*. `friend` now sees the notebook with a
+   *read-only* badge; change the role to *can edit* and they can write.
+3. Click **Remove** next to `friend`: their next sync is refused, without
+   waiting for any token to expire.
+4. Sign in as `admin` / `admin-pass-1` and open **Admin console**: the
+   overview, every user (change a role, disable, reset a password), every
+   notebook with its operation count and log size, the audit log of all of the
+   above, and the **Database** tab with the schema's tables, indexes, views and
+   triggers.
+
+`--memory` keeps everything in memory; drop it (and pass `--data <dir>`) to
+keep accounts in `<dir>/accounts.db`.
+
 ## A 10-minute run for a live review
 
 | Minute | Do | Point to make |
