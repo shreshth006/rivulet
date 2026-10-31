@@ -135,7 +135,7 @@
 </footer>
 
 <dialog id="new-dialog">
-  <form id="new-form">
+  <form method="post" id="new-form">
     <h3>New notebook</h3>
     <label class="field">
       <span class="label">Title</span>
@@ -156,13 +156,13 @@
 <dialog id="share-dialog">
   <div class="dialog-body">
     <h3 id="share-title">Share</h3>
-    <form id="rename-form" class="inline" hidden>
+    <form method="post" id="rename-form" class="inline" hidden>
       <input type="text" name="title" maxlength="80" required aria-label="Notebook title">
       <button type="submit">Rename</button>
     </form>
     <p class="hint" id="share-hint"></p>
     <ul class="members" id="members"></ul>
-    <form id="member-form" class="inline" hidden>
+    <form method="post" id="member-form" class="inline" hidden>
       <input type="text" name="username" placeholder="username" required aria-label="Username to share with">
       <select name="role" aria-label="Access">
         <option value="editor">can edit</option>

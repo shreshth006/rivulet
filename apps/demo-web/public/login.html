@@ -20,7 +20,7 @@
     <button type="button" role="tab" id="tab-register" aria-selected="false">Create account</button>
   </div>
 
-  <form id="login-form" class="card" autocomplete="on">
+  <form id="login-form" class="card" method="post" autocomplete="on">
     <label class="field">
       <span class="label">Username</span>
       <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32" autofocus>
@@ -29,10 +29,10 @@
       <span class="label">Password</span>
       <input type="password" name="password" autocomplete="current-password" required minlength="8">
     </label>
-    <button type="submit" class="primary">Sign in</button>
+    <button type="submit" class="primary" disabled>Sign in</button>
   </form>
 
-  <form id="register-form" class="card" hidden autocomplete="on">
+  <form id="register-form" class="card" method="post" hidden autocomplete="on">
     <label class="field">
       <span class="label">Username <em>3–32 letters, digits, . _ -</em></span>
       <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,31}">
@@ -45,7 +45,7 @@
       <span class="label">Password <em>at least 8 characters</em></span>
       <input type="password" name="password" autocomplete="new-password" required minlength="8">
     </label>
-    <button type="submit" class="primary">Create account</button>
+    <button type="submit" class="primary" disabled>Create account</button>
   </form>
 
   <p class="form-error" id="error" role="alert" hidden></p>

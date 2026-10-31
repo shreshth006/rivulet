@@ -36,7 +36,7 @@
 </section>
 
 <section class="panel" id="panel-users" hidden>
-  <form id="create-user" class="card inline-form">
+  <form id="create-user" class="card inline-form" method="post">
     <h2>Create an account</h2>
     <input type="text" name="username" placeholder="username" required minlength="3" maxlength="32" aria-label="Username">
     <input type="text" name="displayName" placeholder="display name (optional)" maxlength="60" aria-label="Display name">
@@ -91,7 +91,7 @@
 </section>
 
 <dialog id="password-dialog">
-  <form id="password-form">
+  <form id="password-form" method="post">
     <h3 id="password-title">Reset password</h3>
     <label class="field">
       <span class="label">New password <em>signs the user out everywhere</em></span>
