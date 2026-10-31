@@ -81,6 +81,8 @@ export class SyncEngine extends Emitter {
   #streamAttempt = 0;
   #streamOpening = false;
   #streamWired = false;
+  /** The stream has delivered a frame, so it can be relied on to nudge. */
+  #streamLive = false;
   /** Whether the queued follow-up round was asked for by the application. */
   #queuedExplicit = false;
   #dirty = false;
@@ -176,6 +178,7 @@ export class SyncEngine extends Emitter {
     if (this.#streamTimer !== null) { this.#timers.clearTimeout(this.#streamTimer); this.#streamTimer = null; }
     this.#unsubscribe?.();
     this.#unsubscribe = null;
+    this.#streamLive = false;
     await this.#inFlight?.catch(() => {});
     await this.#queued?.catch(() => {});
     await this.#transport.close?.();
@@ -221,7 +224,12 @@ export class SyncEngine extends Emitter {
         this.#streamWired = true;
         this.#transport.on?.('stream-closed', () => this.#onStreamClosed());
       }
+      // Open is not the same as working: a proxy that buffers event streams
+      // passes the headers and holds every frame. Until one arrives, the
+      // stream is not trusted to nudge, and idle polling stays at pollMs.
+      this.#streamLive = false;
       this.#unsubscribe = await this.#transport.subscribe((msg) => {
+        this.#streamLive = true;
         // The stream's opening frame only confirms the subscription; syncing
         // on it would duplicate the round `#connect` is about to run anyway.
         if (msg?.t === 'ready') return;
@@ -242,6 +250,7 @@ export class SyncEngine extends Emitter {
 
   #onStreamClosed() {
     this.#unsubscribe = null;
+    this.#streamLive = false;
     this.emit('stream-closed', {});
     this.#schedule(this.#opts.pollMs); // poll until the stream is back
     this.#retryStream();
@@ -284,11 +293,11 @@ export class SyncEngine extends Emitter {
     this.#timer?.unref?.();
   }
 
-  /** After a completed round: poll if there is no stream, idle if there is. */
+  /** After a completed round: poll if there is no working stream, idle if there is. */
   #scheduleIdle() {
     if (!this.#running) return;
     if (this.#dirty) return this.#schedule(this.#opts.debounceMs);
-    this.#schedule(this.#unsubscribe ? this.#opts.pollMs * 4 : this.#opts.pollMs);
+    this.#schedule(this.#unsubscribe && this.#streamLive ? this.#opts.pollMs * 4 : this.#opts.pollMs);
   }
 
   #handleFailure(err, elapsedMs) {

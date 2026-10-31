@@ -6,6 +6,7 @@ import { HttpTransport } from '#client/transport';
 import { RivuletClient } from '#client/client';
 import { MemoryAdapter } from '#storage/adapter';
 import { nodeIdFromLabel } from '#core/ids';
+import { createServer, request } from 'node:http';
 import { notebookSchema } from './helpers/fixtures.js';
 
 /**
@@ -38,14 +39,48 @@ function makeServer() {
   };
 }
 
-async function client(url, label) {
+async function client(url, label, sync = {}) {
   const node = nodeIdFromLabel(label);
   return RivuletClient.open({
     schema: notebookSchema, room: 'live', node,
     storage: new MemoryAdapter({ name: label }),
     transport: new HttpTransport({ url, room: 'live', node, timeoutMs: 2000 }),
-    sync: { pollMs: 1e9, debounceMs: 10, maxBackoffMs: 500 },
+    sync: { pollMs: 1e9, debounceMs: 10, maxBackoffMs: 500, ...sync },
   });
+}
+
+/**
+ * A proxy that buffers event streams, as some do (Cloudflare's quick tunnels,
+ * corporate proxies): a stream's headers go through, its frames never do.
+ * Everything else is forwarded untouched.
+ */
+function bufferingProxy(target) {
+  const upstream = new URL(target);
+  const held = new Set();
+  const server = createServer((req, res) => {
+    if (req.url.startsWith('/v1/stream')) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.flushHeaders();
+      held.add(res);
+      req.on('close', () => held.delete(res));
+      return;
+    }
+    const forward = request({
+      host: upstream.hostname, port: upstream.port, path: req.url, method: req.method, headers: req.headers,
+    }, (reply) => {
+      res.writeHead(reply.statusCode, reply.headers);
+      reply.pipe(res);
+    });
+    req.pipe(forward);
+  });
+  return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve({
+    url: `http://127.0.0.1:${server.address().port}`,
+    close: () => {
+      for (const res of held) res.destroy();
+      server.closeAllConnections();
+      return new Promise((done) => server.close(done));
+    },
+  })));
 }
 
 async function waitFor(predicate, { timeoutMs = 8000, label = 'condition' } = {}) {
@@ -112,4 +147,24 @@ test('a client that started with the server down gets a stream once it is up', a
   t.after(() => a.close());
   const id = a.mutate((tx) => tx.create('notes', { title: 'b never asked for this' }));
   await waitFor(() => b.get('notes', id), { label: 'b to receive the note over its late stream' });
+});
+
+test('a stream whose frames never arrive does not slow polling down', async (t) => {
+  // Behind a buffering proxy the stream "opens" but delivers nothing. The
+  // engine must not trust it and idle at its long, stream-backed interval
+  // (4 × pollMs, 2 s here); it keeps polling at pollMs until a frame arrives.
+  const server = makeServer();
+  await server.start();
+  const proxy = await bufferingProxy(server.url);
+  const a = await client(proxy.url, 'buffered-a', { pollMs: 500 });
+  const b = await client(proxy.url, 'buffered-b', { pollMs: 500 });
+  t.after(async () => {
+    await Promise.all([a.close(), b.close()]);
+    await proxy.close();
+    await server.stop();
+  });
+
+  const id = a.mutate((tx) => tx.create('notes', { title: 'through a buffering proxy' }));
+  await a.syncUntilIdle();
+  await waitFor(() => b.get('notes', id), { timeoutMs: 1400, label: 'the note at b, by polling' });
 });

@@ -131,7 +131,9 @@ const client = await RivuletClient.open({
   transport: (node) => new HttpTransport({
     url: location.origin, room, node, fetch: gatedFetch, token: session?.syncToken,
   }),
-  sync: { pollMs: 10_000, debounceMs: 250 },
+  // Polling is the fallback when push cannot get through (a proxy that buffers
+  // event streams); every few seconds keeps two windows feeling live even then.
+  sync: { pollMs: 4_000, debounceMs: 250 },
   ...(roomKey ? { encryption: { key: roomKey } } : {}),
 });
 

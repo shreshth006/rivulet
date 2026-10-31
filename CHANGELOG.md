@@ -42,6 +42,16 @@
 
 ### Fixes
 
+- A push stream counts as working only once a frame arrives. A proxy that
+  buffers event streams (Cloudflare's quick tunnels, some corporate proxies)
+  passes the headers and holds every frame; the engine used to trust such a
+  stream and idle at four times the poll interval, so a peer's edit took about
+  40 seconds to appear. It now keeps polling at the normal interval until the
+  stream proves itself. The demo polls every 4 s when push is unavailable.
+- The sign-in page could be submitted before its script loaded, on a slow
+  link, and the browser then sent the username and password in the URL. Forms
+  now post, and their submit buttons stay disabled until the script is in
+  charge.
 - Live updates never reached an idle client. A stream nudge asked for a sync,
   but the scheduler kept whichever timer was already pending, and after every
   round that is the idle poll; the nudge waited out the poll. A sooner request
