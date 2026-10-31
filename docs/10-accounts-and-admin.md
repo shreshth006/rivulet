@@ -103,7 +103,27 @@ for sign-out and purging, `notebooks(owner_id)`, and `memberships(user_id)` for
 **Views** keep reporting queries in SQL rather than in JavaScript:
 `user_overview` (each user with notebooks owned and joined, and when they were
 last seen) and `notebook_overview` (each notebook with its owner's name and
-member count, a `JOIN` plus a `LEFT JOIN ... GROUP BY`).
+member count). The counts are correlated subqueries rather than a `GROUP BY`,
+so SQLite flattens the view into the query that uses it and every lookup stays
+on an index. Views hold no data, so they are dropped and recreated on start
+and a changed definition needs no migration.
+
+`EXPLAIN QUERY PLAN` for the queries on the hot path:
+
+```
+access check, every sync         SEARCH n USING COVERING INDEX sqlite_autoindex_notebooks_1 (room=?)
+                                 SEARCH m USING PRIMARY KEY (notebook_id=? AND user_id=?)
+session lookup, every request    SEARCH s USING INDEX sqlite_autoindex_sessions_1 (token_hash=?)
+                                 SEARCH u USING INTEGER PRIMARY KEY (rowid=?)
+my notebooks                     SEARCH m USING INDEX memberships_by_user (user_id=?)
+                                 SEARCH n USING INTEGER PRIMARY KEY (rowid=?)
+                                 SEARCH o USING INTEGER PRIMARY KEY (rowid=?)
+                                 SEARCH m USING PRIMARY KEY (notebook_id=?)   -- member count
+sign-in by username              SEARCH users USING INDEX sqlite_autoindex_users_1 (username=?)
+```
+
+With 201 users, a sign-in costs about 45 ms (almost all of it scrypt, by
+design) and the per-sync authorisation about 16 µs.
 
 The admin console's **Database** tab prints all of this from `sqlite_schema`,
 with row counts, so the schema on a running server can be checked against this

@@ -134,20 +134,25 @@ BEGIN
   SELECT RAISE(ABORT, 'the last active admin cannot be deleted');
 END;
 
-CREATE VIEW IF NOT EXISTS user_overview AS
+-- Views hold no data, so they are rebuilt on every start: a changed
+-- definition needs no migration. Counts are correlated subqueries rather than
+-- a GROUP BY, so SQLite can flatten the view into the outer query and filter
+-- by id, room or member through the indexes instead of building every row.
+DROP VIEW IF EXISTS user_overview;
+CREATE VIEW user_overview AS
 SELECT u.id, u.username, u.display_name, u.role, u.disabled, u.created_at, u.last_login_at,
        (SELECT count(*) FROM notebooks n WHERE n.owner_id = u.id)  AS notebooks_owned,
        (SELECT count(*) FROM memberships m WHERE m.user_id = u.id) AS notebooks_joined,
        (SELECT max(s.last_seen_at) FROM sessions s WHERE s.user_id = u.id) AS last_seen_at
 FROM users u;
 
-CREATE VIEW IF NOT EXISTS notebook_overview AS
+DROP VIEW IF EXISTS notebook_overview;
+CREATE VIEW notebook_overview AS
 SELECT n.id, n.room, n.title, n.encrypted, n.created_at, n.owner_id,
-       o.username AS owner, count(m.user_id) AS members
+       o.username AS owner,
+       (SELECT count(*) FROM memberships m WHERE m.notebook_id = n.id) AS members
 FROM notebooks n
-JOIN users o ON o.id = n.owner_id
-LEFT JOIN memberships m ON m.notebook_id = n.id
-GROUP BY n.id;
+JOIN users o ON o.id = n.owner_id;
 `;
 
 /* ------------------------------------------------------------- passwords */
