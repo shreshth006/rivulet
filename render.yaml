@@ -1,0 +1,33 @@
+# Render blueprint: the sync server with accounts, the notebook app and the
+# admin console, from this repository's Dockerfile.
+#
+#   Render dashboard -> New -> Blueprint -> pick this repository.
+#   It asks for the two passwords below (they are never stored in git).
+#
+# The free plan has no persistent disk: /data is reset whenever the service
+# restarts or redeploys, and the admin and demo accounts (with the demo's
+# sample notebook) are recreated from these variables on every start. Attach a
+# disk at /data on a paid plan to keep everything.
+services:
+  - type: web
+    name: rivulet
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /v1/health
+    autoDeploy: true
+    envVars:
+      # The Dockerfile listens on 8787; this tells Render where to route.
+      - key: PORT
+        value: "8787"
+      # Added to the image's own flags (--open-schema, so Android rooms work too).
+      - key: RIVULET_FLAGS
+        value: --demo --accounts --trust-proxy
+      - key: RIVULET_ADMIN_USER
+        value: admin
+      - key: RIVULET_ADMIN_PASSWORD
+        sync: false
+      - key: RIVULET_DEMO_USER
+        value: demo
+      - key: RIVULET_DEMO_PASSWORD
+        sync: false

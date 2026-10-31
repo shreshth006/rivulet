@@ -3,6 +3,11 @@
 #   docker build -t rivulet-server .
 #   docker run -p 8787:8787 -v rivulet-data:/data rivulet-server
 #
+# With accounts, the notebook app and the admin console (see render.yaml):
+#
+#   docker run -p 8787:8787 -v rivulet-data:/data \
+#     -e RIVULET_FLAGS="--demo --accounts" -e RIVULET_ADMIN_PASSWORD=... rivulet-server
+#
 # Put TLS in front of it (a reverse proxy or your platform's https). Phones
 # and browsers should reach it over https.
 FROM node:22.12.0-alpine
