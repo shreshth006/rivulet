@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Admin console · Rivulet</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🜄</text></svg>">
+</head>
+<body class="admin-page">
+
+<header class="bar">
+  <h1>Rivulet <span class="muted">admin console</span></h1>
+  <p class="tagline">Accounts, notebooks and sync storage on this server.</p>
+  <nav class="account">
+    <a class="nav-link" href="/">Notebooks</a>
+    <span class="who" id="who"></span>
+    <button id="sign-out" class="ghost">Sign out</button>
+  </nav>
+</header>
+
+<nav class="tabs admin-tabs" role="tablist" id="tabs">
+  <button type="button" role="tab" data-tab="overview" aria-selected="true">Overview</button>
+  <button type="button" role="tab" data-tab="users" aria-selected="false">Users</button>
+  <button type="button" role="tab" data-tab="notebooks" aria-selected="false">Notebooks</button>
+  <button type="button" role="tab" data-tab="audit" aria-selected="false">Audit log</button>
+  <button type="button" role="tab" data-tab="database" aria-selected="false">Database</button>
+</nav>
+
+<p class="form-error page-error" id="error" role="alert" hidden></p>
+
+<section class="panel" id="panel-overview">
+  <div class="tiles" id="tiles"></div>
+  <h2>Server</h2>
+  <dl class="facts" id="facts"></dl>
+</section>
+
+<section class="panel" id="panel-users" hidden>
+  <form id="create-user" class="card inline-form">
+    <h2>Create an account</h2>
+    <input type="text" name="username" placeholder="username" required minlength="3" maxlength="32" aria-label="Username">
+    <input type="text" name="displayName" placeholder="display name (optional)" maxlength="60" aria-label="Display name">
+    <input type="password" name="password" placeholder="password (8+ characters)" required minlength="8" autocomplete="new-password" aria-label="Password">
+    <select name="role" aria-label="Role">
+      <option value="user">user</option>
+      <option value="admin">admin</option>
+    </select>
+    <button type="submit" class="primary">Create</button>
+  </form>
+  <div class="table-wrap">
+    <table id="users-table">
+      <thead><tr>
+        <th>Username</th><th>Display name</th><th>Role</th><th>Status</th>
+        <th class="num">Owns</th><th class="num">Member of</th><th>Last sign-in</th><th>Created</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="panel-notebooks" hidden>
+  <div class="table-wrap">
+    <table id="notebooks-table">
+      <thead><tr>
+        <th>Notebook</th><th>Owner</th><th class="num">Members</th><th>Room</th>
+        <th class="num">Operations</th><th class="num">Replicas</th><th class="num">Log size</th>
+        <th>Last sync</th><th>Created</th><th></th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="panel-audit" hidden>
+  <div class="panel-head"><h2>Most recent 200 events</h2><button id="audit-refresh" class="ghost">Refresh</button></div>
+  <div class="table-wrap">
+    <table id="audit-table">
+      <thead><tr><th>When</th><th>Actor</th><th>Action</th><th>Target</th><th>Detail</th></tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<section class="panel" id="panel-database" hidden>
+  <p class="hint">
+    Accounts live in one SQLite database (<code>accounts.db</code>); each notebook's notes live in its
+    own operation log (<code>&lt;room&gt;.sqlite</code>). This is the accounts schema, read from
+    <code>sqlite_schema</code>.
+  </p>
+  <div id="schema"></div>
+</section>
+
+<dialog id="password-dialog">
+  <form id="password-form">
+    <h3 id="password-title">Reset password</h3>
+    <label class="field">
+      <span class="label">New password <em>signs the user out everywhere</em></span>
+      <input type="password" name="password" required minlength="8" autocomplete="new-password">
+    </label>
+    <div class="dialog-foot">
+      <button type="button" id="password-cancel">Cancel</button>
+      <button type="submit" class="primary">Set password</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="/admin.js"></script>
+</body>
+</html>

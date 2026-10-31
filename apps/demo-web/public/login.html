@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Rivulet</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🜄</text></svg>">
+</head>
+<body class="auth-page">
+
+<main class="auth">
+  <header class="auth-head">
+    <h1>Rivulet</h1>
+    <p class="tagline">An offline-first notebook that syncs over networks that barely work.</p>
+  </header>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-login" aria-selected="true">Sign in</button>
+    <button type="button" role="tab" id="tab-register" aria-selected="false">Create account</button>
+  </div>
+
+  <form id="login-form" class="card" autocomplete="on">
+    <label class="field">
+      <span class="label">Username</span>
+      <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32" autofocus>
+    </label>
+    <label class="field">
+      <span class="label">Password</span>
+      <input type="password" name="password" autocomplete="current-password" required minlength="8">
+    </label>
+    <button type="submit" class="primary">Sign in</button>
+  </form>
+
+  <form id="register-form" class="card" hidden autocomplete="on">
+    <label class="field">
+      <span class="label">Username <em>3–32 letters, digits, . _ -</em></span>
+      <input type="text" name="username" autocomplete="username" required minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9_.\-]{2,31}">
+    </label>
+    <label class="field">
+      <span class="label">Display name <em>optional</em></span>
+      <input type="text" name="displayName" autocomplete="name" maxlength="60">
+    </label>
+    <label class="field">
+      <span class="label">Password <em>at least 8 characters</em></span>
+      <input type="password" name="password" autocomplete="new-password" required minlength="8">
+    </label>
+    <button type="submit" class="primary">Create account</button>
+  </form>
+
+  <p class="form-error" id="error" role="alert" hidden></p>
+  <p class="auth-foot">Notes are stored on your device first and synced to this server. Passwords are stored as salted scrypt hashes.</p>
+</main>
+
+<script type="module" src="/login.js"></script>
+</body>
+</html>

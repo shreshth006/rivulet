@@ -14,6 +14,11 @@
  *    type must not move your cursor. The engine gives correct text; keeping
  *    the selection sane is the application's job, and getting it wrong is what
  *    makes collaborative editors feel broken.
+ *
+ * On a server started with `--accounts` the page belongs to a signed-in user:
+ * it opens one of their notebooks (`?nb=<id>`), syncs with the session's sync
+ * token, and offers notebook switching and sharing. Without accounts it is the
+ * original single-room demo.
  */
 
 import { RivuletClient, Status } from '#client/client';
@@ -21,6 +26,7 @@ import { HttpTransport } from '#client/transport';
 import { defaultAdapter } from '#storage/index';
 import { generateRoomKey } from '#protocol/seal';
 import { demoSchema, DEMO_ROOM } from '/schema.js';
+import { api, currentSession, signOut, h } from '/api.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -37,6 +43,28 @@ const gatedFetch = (...args) => {
   return fetch(...args);
 };
 
+/* ----------------------------------------------------------------- accounts */
+
+/** `null` on a server without accounts; otherwise `{ user, syncToken }`. */
+const session = await currentSession();
+let notebooks = [];
+let notebook = null;
+
+if (session) {
+  notebooks = (await api('GET', '/api/notebooks')).notebooks;
+  if (!notebooks.length) notebooks = [(await api('POST', '/api/notebooks', { title: 'My notebook' })).notebook];
+  const wanted = Number(new URLSearchParams(location.search).get('nb'));
+  notebook = notebooks.find((n) => n.id === wanted) ?? null;
+  // An admin may open anyone's notebook from the console.
+  if (!notebook && wanted && session.user.role === 'admin') {
+    const any = (await api('GET', '/api/admin/notebooks')).notebooks.find((n) => n.id === wanted);
+    if (any) notebooks.push(notebook = { ...any, role: 'admin' });
+  }
+  notebook ??= notebooks[0];
+}
+
+const canWrite = !notebook || notebook.role !== 'viewer';
+
 /* -------------------------------------------------------- encrypted rooms */
 
 /**
@@ -44,11 +72,28 @@ const gatedFetch = (...args) => {
  * fragment is never sent to the server, so sharing the link shares the key
  * with the people you send it to and with nobody else -- the server stores the
  * room's operations without ever being able to read them.
+ *
+ * With accounts the link is `/?nb=<id>#key=<key>`, and this browser remembers
+ * the key so the notebook opens from the list next time.
  */
 const fragment = new URLSearchParams(location.hash.slice(1));
-const roomKey = fragment.get('key');
-const room = roomKey ? fragment.get('room') : DEMO_ROOM;
+const keyStore = {
+  get: (r) => { try { return localStorage.getItem(`rivulet-key-${r}`); } catch { return null; } },
+  set: (r, k) => { try { localStorage.setItem(`rivulet-key-${r}`, k); } catch { /* private mode */ } },
+  forget: (r) => { try { localStorage.removeItem(`rivulet-key-${r}`); } catch { /* private mode */ } },
+};
+let roomKey;
+let room;
+if (notebook) {
+  room = notebook.room;
+  roomKey = notebook.encrypted ? (fragment.get('key') ?? keyStore.get(room)) : null;
+  if (roomKey) keyStore.set(room, roomKey);
+} else {
+  roomKey = fragment.get('key');
+  room = roomKey ? fragment.get('room') : DEMO_ROOM;
+}
 const canEncrypt = Boolean(globalThis.crypto?.subtle);
+const inviteLink = () => `${location.origin}/?nb=${notebook.id}${roomKey ? `#key=${roomKey}` : ''}`;
 
 function newEncryptedRoom() {
   const id = Array.from(crypto.getRandomValues(new Uint8Array(6)), (b) => b.toString(16).padStart(2, '0')).join('');
@@ -57,6 +102,15 @@ function newEncryptedRoom() {
 }
 
 /* ------------------------------------------------------------------- client */
+
+if (notebook?.encrypted && !roomKey) {
+  document.body.replaceChildren(h('main', { className: 'auth' },
+    h('h1', {}, `🔒 ${notebook.title}`),
+    h('p', {}, 'This notebook is end-to-end encrypted, and this browser does not have its key. '
+      + 'Open it from its invite link: the key is the part after #, which never reaches the server.'),
+    h('p', {}, h('a', { href: '/' }, 'Back to your notebooks'))));
+  throw new Error('no key for this encrypted notebook');
+}
 
 if (roomKey && (!room || !canEncrypt)) {
   // WebCrypto needs a secure context: https, or localhost.
@@ -70,11 +124,12 @@ const client = await RivuletClient.open({
   schema: demoSchema,
   room,
   // IndexedDB on a browser, so edits survive a reload and a closed laptop.
-  storage: await defaultAdapter({ name: `rivulet-${room}` }),
+  // Per user as well as per room, so two accounts on one browser stay apart.
+  storage: await defaultAdapter({ name: session ? `rivulet-u${session.user.id}-${room}` : `rivulet-${room}` }),
   // A factory, because the replica id is restored from storage during open --
   // it does not exist yet at this point in the file.
   transport: (node) => new HttpTransport({
-    url: location.origin, room, node, fetch: gatedFetch,
+    url: location.origin, room, node, fetch: gatedFetch, token: session?.syncToken,
   }),
   sync: { pollMs: 10_000, debounceMs: 250 },
   ...(roomKey ? { encryption: { key: roomKey } } : {}),
@@ -83,6 +138,9 @@ const client = await RivuletClient.open({
 /* --------------------------------------------------------------------- state */
 
 let selectedId = null;
+
+/** Every edit goes through here; a read-only member's page makes none. */
+const write = (fn) => (canWrite ? client.mutate(fn) : undefined);
 
 /* -------------------------------------------------------------------- render */
 
@@ -160,7 +218,7 @@ function renderEditor() {
     remove.type = 'button';
     remove.textContent = '×';
     remove.title = `Remove ${tag}`;
-    remove.onclick = () => client.mutate((tx) => tx.remove('notes', selectedId, 'tags', tag));
+    remove.onclick = () => write((tx) => tx.remove('notes', selectedId, 'tags', tag));
     span.append(remove);
     return span;
   }));
@@ -184,7 +242,7 @@ function renderEditor() {
       const pick = document.createElement('button');
       pick.type = 'button';
       pick.textContent = String(value);
-      pick.onclick = () => client.mutate((tx) => tx.set('notes', selectedId, 'estimate', value));
+      pick.onclick = () => write((tx) => tx.set('notes', selectedId, 'estimate', value));
       box.append(pick);
     }
   }
@@ -209,7 +267,8 @@ function renderStatus() {
   $('status-text').textContent = simulatedOffline ? 'offline (simulated)'
     : status === Status.LIVE ? 'synced'
       : status === Status.SYNCING ? 'syncing…'
-        : status === Status.UNAUTHORISED ? (roomKey ? 'cannot decrypt: wrong room key?' : 'not authorised')
+        : status === Status.UNAUTHORISED ? (roomKey ? 'cannot decrypt: wrong room key?'
+          : session ? 'not authorised: your access may have been removed' : 'not authorised')
           : 'offline — edits are saved locally';
 
   $('offline-toggle').textContent = simulatedOffline ? 'Go online' : 'Go offline';
@@ -231,7 +290,7 @@ function select(id) {
 }
 
 $('new-note').onclick = () => {
-  const id = client.mutate((tx) => tx.create('notes', {
+  const id = write((tx) => tx.create('notes', {
     title: 'Untitled', body: '', tags: [], votes: 0,
   }));
   select(id);
@@ -241,43 +300,47 @@ $('delete-note').onclick = () => {
   if (!selectedId) return;
   // A soft delete: it is an ordinary write, so it merges with concurrent
   // edits by timestamp and can be undone the same way.
-  client.mutate((tx) => tx.delete('notes', selectedId));
+  write((tx) => tx.delete('notes', selectedId));
   selectedId = null;
   renderAll();
 };
 
 $('title').oninput = (ev) => {
-  if (selectedId) client.mutate((tx) => tx.set('notes', selectedId, 'title', ev.target.value));
+  if (selectedId) write((tx) => tx.set('notes', selectedId, 'title', ev.target.value));
 };
 
 $('body').oninput = (ev) => {
   // The whole string goes in; the engine works out which characters changed
   // and sends only those.
-  if (selectedId) client.mutate((tx) => tx.setText('notes', selectedId, 'body', ev.target.value));
+  if (selectedId) write((tx) => tx.setText('notes', selectedId, 'body', ev.target.value));
 };
 
 $('tag-input').onkeydown = (ev) => {
   if (ev.key !== 'Enter') return;
   const tag = ev.target.value.trim();
   if (!tag || !selectedId) return;
-  client.mutate((tx) => tx.add('notes', selectedId, 'tags', tag));
+  write((tx) => tx.add('notes', selectedId, 'tags', tag));
   ev.target.value = '';
 };
 
 $('vote-up').onclick = () => selectedId
-  && client.mutate((tx) => tx.increment('notes', selectedId, 'votes', 1));
+  && write((tx) => tx.increment('notes', selectedId, 'votes', 1));
 $('vote-down').onclick = () => selectedId
-  && client.mutate((tx) => tx.increment('notes', selectedId, 'votes', -1));
+  && write((tx) => tx.increment('notes', selectedId, 'votes', -1));
 
 $('estimate').onchange = (ev) => {
   if (!selectedId) return;
   const value = ev.target.value === '' ? null : Number(ev.target.value);
-  client.mutate((tx) => tx.set('notes', selectedId, 'estimate', value));
+  write((tx) => tx.set('notes', selectedId, 'estimate', value));
 };
 
 // Encrypted rooms: start one, or invite people to the one you are in.
 const roomButton = $('room-button');
-if (roomKey) {
+if (session) {
+  // With accounts, encryption is a choice made when creating a notebook.
+  roomButton.hidden = true;
+  $('room-badge').hidden = !roomKey;
+} else if (roomKey) {
   $('room-badge').hidden = false;
   roomButton.textContent = 'Copy invite link';
   roomButton.onclick = async () => {
@@ -298,11 +361,162 @@ $('offline-toggle').onclick = () => {
   if (!simulatedOffline) client.resume();
 };
 
+/* ------------------------------------------------------- notebooks & sharing */
+
+function setupAccount() {
+  const { user } = session;
+  $('account').hidden = false;
+  $('explain').hidden = true;
+  $('explain-accounts').hidden = false;
+  $('who').textContent = user.displayName || user.username;
+  $('who').title = `signed in as ${user.username} (${user.role})`;
+  $('admin-link').hidden = user.role !== 'admin';
+  $('readonly-badge').hidden = canWrite;
+  $('sign-out').onclick = () => signOut();
+  document.title = `${notebook.title} · Rivulet`;
+
+  if (!canWrite) {
+    for (const id of ['new-note', 'delete-note', 'vote-up', 'vote-down']) $(id).hidden = true;
+    for (const id of ['title', 'body', 'estimate', 'tag-input']) $(id).readOnly = true;
+  }
+
+  const select = $('notebook-select');
+  select.replaceChildren(...notebooks.map((n) => h('option', {
+    value: String(n.id), selected: n.id === notebook.id,
+  }, `${n.encrypted ? '🔒 ' : ''}${n.title}${n.role === 'owner' ? '' : ` · ${n.owner}`}`)));
+  select.onchange = () => { location.href = `/?nb=${select.value}`; };
+
+  // New notebook.
+  const dialog = $('new-dialog');
+  const form = $('new-form');
+  $('new-notebook').onclick = () => {
+    form.reset();
+    form.elements.encrypted.disabled = !canEncrypt;
+    $('new-error').hidden = true;
+    dialog.showModal();
+    form.elements.title.select();
+  };
+  $('new-cancel').onclick = () => dialog.close();
+  form.onsubmit = async (ev) => {
+    ev.preventDefault();
+    const encrypted = form.elements.encrypted.checked;
+    try {
+      const { notebook: created } = await api('POST', '/api/notebooks', { title: form.elements.title.value, encrypted });
+      if (!encrypted) { location.href = `/?nb=${created.id}`; return; }
+      const key = generateRoomKey();
+      keyStore.set(created.room, key);
+      location.href = `/?nb=${created.id}#key=${key}`;
+    } catch (err) {
+      $('new-error').textContent = err.message;
+      $('new-error').hidden = false;
+    }
+  };
+
+  $('share-button').onclick = openShare;
+  $('share-close').onclick = () => $('share-dialog').close();
+}
+
+async function openShare() {
+  const dialog = $('share-dialog');
+  const error = $('share-error');
+  error.hidden = true;
+  const fail = (err) => { error.textContent = err.message; error.hidden = false; };
+
+  const render = ({ members, role }) => {
+    const manage = role === 'owner' || role === 'admin';
+    $('share-title').textContent = notebook.title;
+    $('rename-form').hidden = !manage;
+    $('rename-form').elements.title.value = notebook.title;
+    $('member-form').hidden = !manage;
+    $('delete-notebook').hidden = !manage;
+    $('leave-notebook').hidden = manage || role === null;
+    $('share-hint').replaceChildren(notebook.encrypted
+      ? h('span', {}, 'End-to-end encrypted: people you share with also need the invite link, which carries the key. ',
+        h('button', { type: 'button', className: 'link', onclick: copyInvite }, 'Copy invite link'))
+      : h('span', {}, manage
+        ? 'Share by username. Editors can write; viewers can only read. Access is checked on every sync.'
+        : `Shared with you by ${notebook.owner} as ${role}.`));
+    $('members').replaceChildren(...members.map((m) => h('li', {},
+      h('span', { className: 'member-name' }, m.displayName ? `${m.displayName} ` : '', h('code', {}, m.username)),
+      h('span', { className: `role role-${m.role}` }, m.role),
+      manage && m.role !== 'owner'
+        ? h('button', {
+          type: 'button', className: 'ghost small', title: `Remove ${m.username}`,
+          onclick: () => api('DELETE', `/api/notebooks/${notebook.id}/members/${m.id}`).then((r) => render({ ...r, role })).catch(fail),
+        }, 'Remove')
+        : null)));
+  };
+
+  try {
+    render(await api('GET', `/api/notebooks/${notebook.id}/members`));
+  } catch (err) {
+    fail(err);
+  }
+
+  $('member-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    const f = ev.target;
+    try {
+      const result = await api('POST', `/api/notebooks/${notebook.id}/members`, {
+        username: f.elements.username.value.trim(), role: f.elements.role.value,
+      });
+      f.elements.username.value = '';
+      error.hidden = true;
+      render({ ...result, role: notebook.role === 'admin' ? 'admin' : 'owner' });
+    } catch (err) { fail(err); }
+  };
+
+  $('rename-form').onsubmit = async (ev) => {
+    ev.preventDefault();
+    try {
+      const { notebook: renamed } = await api('PATCH', `/api/notebooks/${notebook.id}`, { title: ev.target.elements.title.value });
+      notebook.title = renamed.title;
+      setupAccount();
+      $('share-title').textContent = renamed.title;
+    } catch (err) { fail(err); }
+  };
+
+  // Destructive actions take a second click rather than a blocking confirm().
+  const twoStep = (button, label, action) => {
+    button.textContent = label;
+    button.onclick = () => {
+      if (button.dataset.armed) return action().catch(fail);
+      button.dataset.armed = '1';
+      button.textContent = 'Click again to confirm';
+      setTimeout(() => { delete button.dataset.armed; button.textContent = label; }, 4000);
+    };
+  };
+  twoStep($('delete-notebook'), 'Delete notebook', async () => {
+    await api('DELETE', `/api/notebooks/${notebook.id}`);
+    keyStore.forget(notebook.room);
+    location.href = '/';
+  });
+  twoStep($('leave-notebook'), 'Leave notebook', async () => {
+    await api('DELETE', `/api/notebooks/${notebook.id}/members/${session.user.id}`);
+    location.href = '/';
+  });
+
+  if (!dialog.open) dialog.showModal();
+}
+
+async function copyInvite(ev) {
+  await navigator.clipboard?.writeText(inviteLink()).catch(() => {});
+  ev.target.textContent = 'Link copied';
+  setTimeout(() => { ev.target.textContent = 'Copy invite link'; }, 1500);
+}
+
+if (session) setupAccount();
+
 /* -------------------------------------------------------------------- wiring */
 
 client.on('change', renderAll);
 client.on('batch', renderAll);
-client.on('status', renderStatus);
+client.on('status', ({ status }) => {
+  renderStatus();
+  // Refused: find out whether the session ended (back to sign-in) or only
+  // this notebook's access did (the status line says so).
+  if (session && status === Status.UNAUTHORISED) currentSession().catch(() => {});
+});
 client.on('sync', renderStats);
 
 // The browser's own online/offline events are a hint worth acting on: they

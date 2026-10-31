@@ -35,7 +35,28 @@
     <span class="badge" id="room-badge" hidden title="The server stores this room's operations but cannot read them">🔒 end-to-end encrypted</span>
     <button id="room-button" class="ghost">New encrypted room</button>
   </div>
+  <nav class="account" id="account" hidden>
+    <label class="notebook-pick" title="Switch notebook">
+      <span class="label-inline">Notebook</span>
+      <select id="notebook-select"></select>
+    </label>
+    <span class="badge warn" id="readonly-badge" hidden title="The owner shared this notebook with you to read">read-only</span>
+    <button id="new-notebook" class="ghost">New notebook</button>
+    <button id="share-button" class="ghost">Share</button>
+    <a id="admin-link" class="nav-link" href="/admin.html" hidden>Admin console</a>
+    <span class="who" id="who"></span>
+    <button id="sign-out" class="ghost">Sign out</button>
+  </nav>
 </header>
+
+<section class="explain" id="explain-accounts" hidden>
+  <p>
+    <strong>Try this:</strong> open this notebook in two windows side by side.
+    Click <em>Go offline</em> in one, edit the same note in both, then come
+    back online. Nothing is lost and no dialog asks you to choose. Use
+    <em>Share</em> to give another user access by username.
+  </p>
+</section>
 
 <section class="explain" id="explain">
   <p>
@@ -112,6 +133,51 @@
   <span title="Bytes actually sent and received, after encoding and compression">wire <code id="stat-bytes">0 B</code></span>
   <span title="Operations the engine sends per sync request, adapted to the link">batch <code id="stat-batch">–</code></span>
 </footer>
+
+<dialog id="new-dialog">
+  <form id="new-form">
+    <h3>New notebook</h3>
+    <label class="field">
+      <span class="label">Title</span>
+      <input type="text" name="title" required maxlength="80" value="Untitled notebook">
+    </label>
+    <label class="check">
+      <input type="checkbox" name="encrypted">
+      <span>End-to-end encrypted <em>the key lives only in the link, so the server cannot read the notes</em></span>
+    </label>
+    <p class="form-error" id="new-error" hidden></p>
+    <div class="dialog-foot">
+      <button type="button" id="new-cancel">Cancel</button>
+      <button type="submit" class="primary">Create</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="share-dialog">
+  <div class="dialog-body">
+    <h3 id="share-title">Share</h3>
+    <form id="rename-form" class="inline" hidden>
+      <input type="text" name="title" maxlength="80" required aria-label="Notebook title">
+      <button type="submit">Rename</button>
+    </form>
+    <p class="hint" id="share-hint"></p>
+    <ul class="members" id="members"></ul>
+    <form id="member-form" class="inline" hidden>
+      <input type="text" name="username" placeholder="username" required aria-label="Username to share with">
+      <select name="role" aria-label="Access">
+        <option value="editor">can edit</option>
+        <option value="viewer">can view</option>
+      </select>
+      <button type="submit">Share</button>
+    </form>
+    <p class="form-error" id="share-error" hidden></p>
+    <div class="dialog-foot">
+      <button type="button" id="delete-notebook" class="danger" hidden>Delete notebook</button>
+      <button type="button" id="leave-notebook" class="danger" hidden>Leave notebook</button>
+      <button type="button" id="share-close">Done</button>
+    </div>
+  </div>
+</dialog>
 
 <script type="module" src="/app.js"></script>
 </body>
