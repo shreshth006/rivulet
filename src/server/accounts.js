@@ -193,6 +193,11 @@ function checkPassword(password) {
   return password;
 }
 
+/** Whether `value` is a hash in the format `hashPassword` produces. */
+export function isPasswordHash(value) {
+  return typeof value === 'string' && /^scrypt\$\d+\$\d+\$\d+\$[\w-]{16,}\$[\w-]{16,}$/.test(value);
+}
+
 function checkTitle(title) {
   const clean = typeof title === 'string' ? title.trim() : '';
   if (clean.length < 1 || clean.length > 80) throw new ValidationError('a notebook title is 1 to 80 characters');
@@ -376,17 +381,24 @@ export class AccountStore {
   /**
    * @param {object} fields
    * @param {string} fields.username
-   * @param {string} fields.password
+   * @param {string} [fields.password]
+   * @param {string} [fields.passwordHash] instead of `password`: an existing
+   *   `hashPassword` result, so a deployment's configuration never needs to
+   *   hold the plaintext
    * @param {string} [fields.displayName]
    * @param {'admin'|'user'} [fields.role]
    * @param {object} [actor] who is doing it, for the audit log; omitted means self sign-up
    */
-  async createUser({ username, password, displayName = '', role = 'user' }, actor) {
+  async createUser({ username, password, passwordHash, displayName = '', role = 'user' }, actor) {
     checkUsername(username);
-    checkPassword(password);
+    if (passwordHash !== undefined) {
+      if (!isPasswordHash(passwordHash)) throw new ValidationError('not a password hash from hashPassword');
+    } else {
+      checkPassword(password);
+    }
     checkOneOf(role, ROLES, 'role');
     const name = String(displayName ?? '').trim().slice(0, 60);
-    const hash = await hashPassword(password);
+    const hash = passwordHash ?? await hashPassword(password);
     return this.#tx(() => {
       const { lastInsertRowid } = this.#q.insertUser.run(username, name, hash, role, this.#now());
       const user = toUser(this.#q.userById.get(lastInsertRowid));
@@ -487,19 +499,27 @@ export class AccountStore {
       throw new AuthError('wrong username or password');
     }
     if (row.disabled === 1) throw new AuthError('this account is disabled');
+    return this.openSession(toUser(row), { ip, userAgent });
+  }
 
+  /**
+   * Open a session for `user` without checking a password. For `login`, and
+   * for trusted server code such as seeding a demo account; never reachable
+   * from a request on its own.
+   */
+  openSession(user, { ip = null, userAgent = null, record = 'login' } = {}) {
     const token = randomBytes(32).toString('base64url');
     const now = this.#now();
     const expiresAt = now + this.#sessionMs;
     const sessionId = this.#tx(() => {
       this.#q.purgeSessions.run(now);
       const { lastInsertRowid } = this.#q.insertSession.run(
-        row.id, sha256(token), now, expiresAt, now, ip, userAgent ? String(userAgent).slice(0, 200) : null);
-      this.#q.setLastLogin.run(now, row.id);
-      this.#record(row, 'login', row.username);
+        user.id, sha256(token), now, expiresAt, now, ip, userAgent ? String(userAgent).slice(0, 200) : null);
+      if (record === 'login') this.#q.setLastLogin.run(now, user.id);
+      if (record) this.#record(user, record, user.username);
       return Number(lastInsertRowid);
     });
-    return { user: this.user(row.id), token, sessionId, expiresAt };
+    return { user: this.user(user.id), token, sessionId, expiresAt };
   }
 
   /** @returns {{ user: object, sessionId: number, expiresAt: number } | null} */
@@ -662,11 +682,14 @@ export class AccountStore {
     }));
   }
 
-  /** Make sure an account exists; used to seed a deployment from its environment. */
-  async ensureUser({ username, password, role = 'user', displayName = '' }) {
+  /**
+   * Make sure an account exists; used to seed a deployment from its
+   * environment. Takes a `password` or a `passwordHash`.
+   */
+  async ensureUser({ username, password, passwordHash, role = 'user', displayName = '' }) {
     const existing = this.userByName(username);
     if (existing) return { user: existing, created: false };
-    return { user: await this.createUser({ username, password, role, displayName }, SYSTEM), created: true };
+    return { user: await this.createUser({ username, password, passwordHash, role, displayName }, SYSTEM), created: true };
   }
 }
 

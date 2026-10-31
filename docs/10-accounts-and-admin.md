@@ -201,8 +201,14 @@ browser                         server
 
 The repository's `render.yaml` deploys the Docker image to Render:
 
-1. Render dashboard → **New** → **Blueprint** → choose this repository.
-2. Enter `RIVULET_ADMIN_PASSWORD` and `RIVULET_DEMO_PASSWORD` when asked.
+1. Render dashboard → **New** → **Blueprint** → choose this repository (or
+   open `https://render.com/deploy?repo=https://github.com/shreshth006/rivulet`).
+2. Apply. There is nothing to type: the blueprint gives the `admin` and `demo`
+   passwords as scrypt hashes (`RIVULET_ADMIN_PASSWORD_HASH`,
+   `RIVULET_DEMO_PASSWORD_HASH`), so neither git nor Render holds a plaintext
+   password. For your own deployment, replace them with hashes of your own:
+   `node apps/cli/hash-password.js` reads a password from standard input and
+   prints its hash.
 3. The service starts with an `admin` account and a `demo` account whose
    notebook already holds three notes.
 
@@ -217,7 +223,8 @@ docker run -p 8787:8787 -v rivulet-data:/data \
   rivulet-server
 ```
 
-Accounts are seeded on every start and existing ones are left alone, so
+`RIVULET_*_PASSWORD_HASH` works the same way in place of a plaintext
+`RIVULET_*_PASSWORD`. Accounts are seeded on every start and existing ones are left alone, so
 changing a variable later does not reset a password; use the console for that.
 Behind a platform load balancer add `--trust-proxy` so rate limits and the
 `Secure` cookie flag see the real client address and scheme.

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { AccountStore, hashPassword, verifyPassword } from '#server/accounts';
+import { AccountStore, hashPassword, verifyPassword, isPasswordHash } from '#server/accounts';
 import { AuthError, ValidationError } from '#core/errors';
 import { issueRoomToken } from '#server/tokens';
 
@@ -171,4 +171,24 @@ test('the schema is introspectable, with row counts', async (t) => {
   }
   assert.equal(objects.find((o) => o.name === 'users').rows, 1);
   assert.equal(store.counts().admins, 1);
+});
+
+test('an account can be seeded from a password hash, never seeing the plaintext', async (t) => {
+  const store = open();
+  t.after(() => store.close());
+  const hash = await hashPassword('seeded-secret');
+  assert.equal(isPasswordHash(hash), true);
+  assert.equal(isPasswordHash('scrypt$1$2$3$short$short'), false);
+  assert.equal(isPasswordHash('seeded-secret'), false);
+
+  const { user, created } = await store.ensureUser({ username: 'seeded', passwordHash: hash, role: 'admin' });
+  assert.equal(created, true);
+  assert.equal(user.role, 'admin');
+  assert.ok(await store.login({ username: 'seeded', password: 'seeded-secret' }));
+  await assert.rejects(store.ensureUser({ username: 'other', passwordHash: 'plaintext-oops' }), ValidationError);
+
+  // Server code can open a session for an account it just seeded.
+  const session = store.openSession(user, { record: 'seed' });
+  assert.equal(store.session(session.token).user.username, 'seeded');
+  assert.ok(store.audit().some((e) => e.action === 'seed'));
 });

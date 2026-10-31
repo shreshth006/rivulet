@@ -1,8 +1,14 @@
 # Render blueprint: the sync server with accounts, the notebook app and the
 # admin console, from this repository's Dockerfile.
 #
-#   Render dashboard -> New -> Blueprint -> pick this repository.
-#   It asks for the two passwords below (they are never stored in git).
+#   Render dashboard -> New -> Blueprint -> pick this repository, or open
+#   https://render.com/deploy?repo=https://github.com/shreshth006/rivulet
+#
+# The admin and demo logins are given as scrypt hashes, so neither git nor
+# Render's configuration holds a plaintext password. For your own deployment,
+# replace them with hashes of your own passwords:
+#
+#   node apps/cli/hash-password.js      (type the password, press enter)
 #
 # The free plan has no persistent disk: /data is reset whenever the service
 # restarts or redeploys, and the admin and demo accounts (with the demo's
@@ -25,9 +31,9 @@ services:
         value: --demo --accounts --trust-proxy
       - key: RIVULET_ADMIN_USER
         value: admin
-      - key: RIVULET_ADMIN_PASSWORD
-        sync: false
+      - key: RIVULET_ADMIN_PASSWORD_HASH
+        value: scrypt$16384$8$1$jfNVOYGgqQgV_RMUWj39Pg$mtluRGV6qs6vgXQsp5v__6_0-Mi9CxkvypSDYwx44bo
       - key: RIVULET_DEMO_USER
         value: demo
-      - key: RIVULET_DEMO_PASSWORD
-        sync: false
+      - key: RIVULET_DEMO_PASSWORD_HASH
+        value: scrypt$16384$8$1$2uc71EnOEgYUHJVPpVfy5Q$WC1lW5JHgbGh0fwxIg0vKqZPSr69VO7FIyUzMwO1qlg

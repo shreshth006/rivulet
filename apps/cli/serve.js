@@ -49,6 +49,9 @@ Options:
                      'admin'; without a password one is generated and printed)
                    RIVULET_DEMO_USER / RIVULET_DEMO_PASSWORD    optional user
                      with a sample notebook
+                 Instead of a *_PASSWORD, a *_PASSWORD_HASH from
+                 apps/cli/hash-password.js keeps the plaintext out of the
+                 platform's configuration.
                  Signed room tokens still work alongside when RIVULET_SECRET is set.
   --no-signup    with --accounts: only admins create accounts
   --trust-proxy  read the client address and https from X-Forwarded-* headers
@@ -117,26 +120,29 @@ if (opts.accounts) {
   if (!opts.memory) await mkdir(opts.data, { recursive: true });
   store = new AccountStore({ path: opts.memory ? ':memory:' : join(opts.data, 'accounts.db') });
 
+  // A *_PASSWORD_HASH wins over a *_PASSWORD, so the plaintext need not be
+  // in the environment at all.
+  const secretFor = (prefix) => {
+    const passwordHash = process.env[`${prefix}_PASSWORD_HASH`] || undefined;
+    return passwordHash ? { passwordHash } : { password: process.env[`${prefix}_PASSWORD`] || undefined };
+  };
+
   const adminName = process.env.RIVULET_ADMIN_USER || 'admin';
-  let adminPassword = process.env.RIVULET_ADMIN_PASSWORD;
-  const generated = !adminPassword && !store.userByName(adminName);
-  if (generated) adminPassword = randomBytes(9).toString('base64url');
-  if (adminPassword || !store.userByName(adminName)) {
-    const { created } = await store.ensureUser({
-      username: adminName, password: adminPassword, role: 'admin', displayName: 'Administrator',
-    });
-    if (created) {
-      store.createNotebook(store.userByName(adminName), { title: 'Admin notes' });
-      console.log(`created admin account "${adminName}"${generated ? ` with password ${adminPassword}` : ''}`);
-    }
+  if (!store.userByName(adminName)) {
+    const secret = secretFor('RIVULET_ADMIN');
+    const generated = !secret.password && !secret.passwordHash;
+    if (generated) secret.password = randomBytes(9).toString('base64url');
+    const { user } = await store.ensureUser({ username: adminName, role: 'admin', displayName: 'Administrator', ...secret });
+    store.createNotebook(user, { title: 'Admin notes' });
+    console.log(`created admin account "${adminName}"${generated ? ` with password ${secret.password}` : ''}`);
   }
 
   const demoName = process.env.RIVULET_DEMO_USER;
-  const demoPassword = process.env.RIVULET_DEMO_PASSWORD;
-  if (demoName && demoPassword) {
-    const { user, created } = await store.ensureUser({ username: demoName, password: demoPassword, displayName: 'Demo user' });
+  const demoSecret = secretFor('RIVULET_DEMO');
+  if (demoName && (demoSecret.password || demoSecret.passwordHash)) {
+    const { user, created } = await store.ensureUser({ username: demoName, displayName: 'Demo user', ...demoSecret });
     if (created) {
-      seeded = { user, password: demoPassword, notebook: store.createNotebook(user, { title: 'Getting started' }) };
+      seeded = { user, notebook: store.createNotebook(user, { title: 'Getting started' }) };
       console.log(`created demo account "${demoName}"`);
     }
   }
@@ -189,7 +195,8 @@ if (opts.demo) {
  * them: a replica signs in, mutates locally and syncs over HTTP.
  */
 if (seeded) {
-  const { sessionId } = await store.login({ username: seeded.user.username, password: seeded.password });
+  // The server's own session for the demo user; no password needed or kept.
+  const { sessionId } = store.openSession(seeded.user, { record: 'seed' });
   const room = seeded.notebook.room;
   const client = await RivuletClient.open({
     schema: demoSchema, room,

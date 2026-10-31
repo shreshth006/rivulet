@@ -21,8 +21,11 @@
   server flags through the environment; the admin and an optional demo account
   (with three sample notes, written by a real replica over HTTP) are seeded
   from `RIVULET_ADMIN_*` and `RIVULET_DEMO_*`.
+- Seed logins can be given as scrypt hashes (`RIVULET_*_PASSWORD_HASH`, made by
+  `apps/cli/hash-password.js`), so a deployment's configuration never holds a
+  plaintext password; `render.yaml` deploys with nothing to type.
 - `docs/10-accounts-and-admin.md`: schema, ER diagram, authorisation flow, API.
-  14 new tests (314 in total).
+  15 new tests (315 in total).
 
 ### Android
 
