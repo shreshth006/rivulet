@@ -15,8 +15,9 @@
  *   POST /v1/sync    push and pull in one round trip
  *   GET  /v1/stream  server-sent notifications that something changed
  *
- * The rest is operational: health, stats, and optional static hosting so the
- * demo is one command rather than two servers and a CORS problem.
+ * The rest is operational: health, stats, optional static hosting so the
+ * demo is one command rather than two servers and a CORS problem, and an
+ * optional JSON API under `/api` (accounts, see `#server/accounts-api`).
  */
 
 import { createServer } from 'node:http';
@@ -79,13 +80,15 @@ export class HttpSyncServer {
    *   give the engine an `authorize` hook (e.g. `roomTokens`) instead.
    * @param {string[]} [opts.origins] allowed CORS origins; '*' by default
    * @param {number} [opts.heartbeatMs] SSE keep-alive interval
+   * @param {(req, res, url: URL) => Promise<void>} [opts.api] handles every
+   *   request under `/api/`
    */
-  constructor({ engine, staticDir, mounts, token, origins = ['*'], heartbeatMs = 25_000 }) {
+  constructor({ engine, staticDir, mounts, token, origins = ['*'], heartbeatMs = 25_000, api }) {
     this.#engine = engine;
     // Longest prefix first, so '/src' is matched before '/'.
     const all = { ...(staticDir ? { '/': staticDir } : {}), ...mounts };
     this.#opts = {
-      token, origins, heartbeatMs,
+      token, origins, heartbeatMs, api,
       mounts: Object.entries(all).sort((a, b) => b[0].length - a[0].length),
     };
   }
@@ -138,6 +141,7 @@ export class HttpSyncServer {
     if (req.method === 'OPTIONS') return res.writeHead(204).end();
 
     const url = new URL(req.url, 'http://localhost');
+    if (this.#opts.api && url.pathname.startsWith('/api/')) return this.#opts.api(req, res, url);
     switch (`${req.method} ${url.pathname}`) {
       case 'POST /v1/sync': return this.#sync(req, res);
       case 'GET /v1/stream': return this.#stream(req, res, url);
@@ -341,15 +345,21 @@ export const DEFAULT_RATE_LIMIT = Object.freeze({
   perIp: Object.freeze({ perSecond: 125, burst: 1000 }),
 });
 
+/** The file that holds a room's operation log under `dataDir`. */
+export function roomFile(dataDir, room) {
+  return join(dataDir, `${room.replace(/[^\w.-]/g, '_')}.sqlite`);
+}
+
 /**
  * Convenience factory: a listening server with SQLite-backed rooms.
- * `rateLimit: false` turns limiting off.
+ * `rateLimit: false` turns limiting off. `api` is a factory given the engine,
+ * returning the `/api` handler.
  * @param {object} opts
  */
 export async function startServer({
   port = 8787, host = '127.0.0.1', dataDir = './data', schema,
   token, secret, authorize, staticDir, mounts, origins, memory = false,
-  rateLimit = DEFAULT_RATE_LIMIT,
+  rateLimit = DEFAULT_RATE_LIMIT, api,
 } = {}) {
   const { SqliteAdapter } = await import('#storage/sqlite');
   const { MemoryAdapter } = await import('#storage/adapter');
@@ -365,8 +375,8 @@ export async function startServer({
     // backed up, moved or deleted without touching the others.
     storage: async (room) => (memory
       ? new MemoryAdapter({ name: room })
-      : new SqliteAdapter({ path: join(dataDir, `${room.replace(/[^\w.-]/g, '_')}.sqlite`) })),
+      : new SqliteAdapter({ path: roomFile(dataDir, room) })),
   });
 
-  return new HttpSyncServer({ engine, token, staticDir, mounts, origins }).listen(port, host);
+  return new HttpSyncServer({ engine, token, staticDir, mounts, origins, api: api?.(engine) }).listen(port, host);
 }
