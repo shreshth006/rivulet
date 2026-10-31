@@ -6,11 +6,19 @@
  *   node --experimental-sqlite apps/cli/serve.js --port 8080 --data ./data
  *   node --experimental-sqlite apps/cli/serve.js --token secret
  *   RIVULET_SECRET=... node --experimental-sqlite apps/cli/serve.js --room-tokens
+ *   RIVULET_ADMIN_PASSWORD=... node --experimental-sqlite apps/cli/serve.js --demo --accounts
  */
 
 import { fileURLToPath } from 'node:url';
 import { dirname, join, resolve } from 'node:path';
-import { startServer, DEFAULT_RATE_LIMIT } from '#server/http';
+import { randomBytes } from 'node:crypto';
+import { mkdir, rm } from 'node:fs/promises';
+import { startServer, roomFile, DEFAULT_RATE_LIMIT } from '#server/http';
+import { AccountStore } from '#server/accounts';
+import { accountsApi } from '#server/accounts-api';
+import { RivuletClient } from '#client/client';
+import { HttpTransport } from '#client/transport';
+import { MemoryAdapter } from '#storage/adapter';
 import { demoSchema } from '../demo-web/public/schema.js';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -33,7 +41,22 @@ Options:
   --demo         also serve the demo app at /
   --memory       keep everything in memory; nothing survives a restart
   --open-schema  accept any client schema instead of pinning the demo's
+  --accounts     user accounts: sign-in, notebooks shared by username, an admin
+                 console at /admin.html. Accounts live in <data>/accounts.db.
+                 Seeded from the environment on every start (existing accounts
+                 are left alone):
+                   RIVULET_ADMIN_USER / RIVULET_ADMIN_PASSWORD  (default user
+                     'admin'; without a password one is generated and printed)
+                   RIVULET_DEMO_USER / RIVULET_DEMO_PASSWORD    optional user
+                     with a sample notebook
+                 Signed room tokens still work alongside when RIVULET_SECRET is set.
+  --no-signup    with --accounts: only admins create accounts
+  --trust-proxy  read the client address and https from X-Forwarded-* headers
+                 (set this behind a platform load balancer, never on the open internet)
   -h, --help     this message
+
+Flags in RIVULET_FLAGS (space-separated) are added to the command line, so a
+hosting platform can configure the container image without rebuilding it.
 `;
 
 function parseArgs(argv) {
@@ -41,6 +64,7 @@ function parseArgs(argv) {
     port: 8787, host: '127.0.0.1', data: './data',
     token: undefined, roomTokens: false, demo: false, memory: false, openSchema: false,
     rate: DEFAULT_RATE_LIMIT.perSecond, rateLimit: true,
+    accounts: false, signup: true, trustProxy: false,
   };
   for (let i = 0; i < argv.length; i++) {
     switch (argv[i]) {
@@ -54,6 +78,9 @@ function parseArgs(argv) {
       case '--demo': opts.demo = true; break;
       case '--memory': opts.memory = true; break;
       case '--open-schema': opts.openSchema = true; break;
+      case '--accounts': opts.accounts = true; break;
+      case '--no-signup': opts.signup = false; break;
+      case '--trust-proxy': opts.trustProxy = true; break;
       case '-h': case '--help': opts.help = true; break;
       default: throw new Error(`unknown argument: ${argv[i]}`);
     }
@@ -61,12 +88,14 @@ function parseArgs(argv) {
   return opts;
 }
 
-const opts = parseArgs(process.argv.slice(2));
+const envFlags = (process.env.RIVULET_FLAGS ?? '').split(/\s+/).filter(Boolean);
+const opts = parseArgs([...process.argv.slice(2), ...envFlags]);
 if (opts.help) { console.log(HELP); process.exit(0); }
 // The secret comes from the environment, not argv: arguments show up in `ps`.
 const secret = opts.roomTokens ? process.env.RIVULET_SECRET : undefined;
 if (opts.roomTokens && !secret) throw new Error('--room-tokens needs RIVULET_SECRET set');
 if (opts.roomTokens && opts.token) throw new Error('use --token or --room-tokens, not both');
+if (opts.accounts && opts.token) throw new Error('use --token or --accounts, not both');
 if (!(opts.rate > 0)) throw new Error('--rate must be a positive number');
 
 // Scale the whole default policy, burst and per-address budget included.
@@ -80,13 +109,60 @@ const rateLimit = opts.rateLimit && {
   },
 };
 
+/* ---------------------------------------------------------------- accounts */
+
+let store = null;
+let seeded = null;
+if (opts.accounts) {
+  if (!opts.memory) await mkdir(opts.data, { recursive: true });
+  store = new AccountStore({ path: opts.memory ? ':memory:' : join(opts.data, 'accounts.db') });
+
+  const adminName = process.env.RIVULET_ADMIN_USER || 'admin';
+  let adminPassword = process.env.RIVULET_ADMIN_PASSWORD;
+  const generated = !adminPassword && !store.userByName(adminName);
+  if (generated) adminPassword = randomBytes(9).toString('base64url');
+  if (adminPassword || !store.userByName(adminName)) {
+    const { created } = await store.ensureUser({
+      username: adminName, password: adminPassword, role: 'admin', displayName: 'Administrator',
+    });
+    if (created) {
+      store.createNotebook(store.userByName(adminName), { title: 'Admin notes' });
+      console.log(`created admin account "${adminName}"${generated ? ` with password ${adminPassword}` : ''}`);
+    }
+  }
+
+  const demoName = process.env.RIVULET_DEMO_USER;
+  const demoPassword = process.env.RIVULET_DEMO_PASSWORD;
+  if (demoName && demoPassword) {
+    const { user, created } = await store.ensureUser({ username: demoName, password: demoPassword, displayName: 'Demo user' });
+    if (created) {
+      seeded = { user, password: demoPassword, notebook: store.createNotebook(user, { title: 'Getting started' }) };
+      console.log(`created demo account "${demoName}"`);
+    }
+  }
+}
+
+// Removing a notebook's operation log once its notebook row is gone: close
+// the room, then delete the file and its WAL companions.
+async function dropRoom(room, engine) {
+  await engine.closeRoom(room);
+  if (opts.memory) return;
+  const file = roomFile(opts.data, room);
+  await Promise.all(['', '-wal', '-shm'].map((suffix) => rm(`${file}${suffix}`, { force: true })));
+}
+
 const server = await startServer({
   port: opts.port,
   host: opts.host,
   dataDir: opts.data,
   memory: opts.memory,
   token: opts.token,
-  secret,
+  secret: store ? undefined : secret,
+  authorize: store ? store.authorizer({ roomTokenSecret: process.env.RIVULET_SECRET || undefined }) : undefined,
+  api: store ? (engine) => accountsApi({
+    store, engine, signup: opts.signup, trustProxy: opts.trustProxy,
+    dropRoom: (room) => dropRoom(room, engine),
+  }) : undefined,
   rateLimit,
   // Pinning the schema turns a client/server version skew into a clear error
   // at connect time instead of operations that silently do nothing.
@@ -99,16 +175,49 @@ const server = await startServer({
 const { port } = server.address;
 console.log(`rivulet sync server on http://${opts.host}:${port}`);
 console.log(`  storage   ${opts.memory ? 'in memory (not durable)' : resolve(opts.data)}`);
-console.log(`  auth      ${secret ? 'room tokens required' : opts.token ? 'bearer token required' : 'open'}`);
+console.log(`  auth      ${store ? `accounts (${opts.signup ? 'open sign-up' : 'admins create accounts'})${process.env.RIVULET_SECRET ? ' + room tokens' : ''}`
+  : secret ? 'room tokens required' : opts.token ? 'bearer token required' : 'open'}`);
 console.log(`  limits    ${rateLimit ? `${rateLimit.perSecond}/s per replica (burst ${rateLimit.burst}), ${rateLimit.perIp.perSecond}/s per address` : 'no rate limit'}`);
 if (opts.demo) {
   console.log(`  demo      http://${opts.host}:${port}/`);
+  if (store) console.log(`  admin     http://${opts.host}:${port}/admin.html`);
   console.log('\nOpen it in two windows to watch them sync.');
+}
+
+/**
+ * A demo account starts with a few notes, written the way any client writes
+ * them: a replica signs in, mutates locally and syncs over HTTP.
+ */
+if (seeded) {
+  const { sessionId } = await store.login({ username: seeded.user.username, password: seeded.password });
+  const room = seeded.notebook.room;
+  const client = await RivuletClient.open({
+    schema: demoSchema, room,
+    storage: new MemoryAdapter({ name: 'seed' }),
+    transport: (node) => new HttpTransport({
+      url: `http://127.0.0.1:${port}`, room, node, token: store.syncToken(sessionId),
+    }),
+    sync: { pollMs: 1e9, debounceMs: 1e9 },
+  });
+  const notes = [
+    { title: 'Welcome to Rivulet', tags: ['start'], votes: 3, estimate: 1,
+      body: 'Everything you type here is saved on this device first and synced when the network allows.\n\nTry it: open this notebook in two windows, click "Go offline" in one, edit the same note in both, then go back online.' },
+    { title: 'Sharing a notebook', tags: ['sharing'], votes: 1,
+      body: 'Use "Share" to give another user access by username, as an editor (can write) or a viewer (read-only). Access is checked on every sync, so removing someone takes effect immediately.' },
+    { title: 'How merges work', tags: ['crdt', 'design'], votes: 2, estimate: 5,
+      body: 'Each field has its own merge rule: the title is last-writer-wins, the body merges character by character, tags are an add-wins set, votes add up, and the estimate keeps both values when two people change it at once.' },
+  ];
+  for (const note of notes) client.mutate((tx) => tx.create('notes', note));
+  await client.syncUntilIdle();
+  await client.close();
+  store.logout(sessionId);
+  console.log(`  seeded    ${notes.length} notes into "${seeded.notebook.title}"`);
 }
 
 const shutdown = async (signal) => {
   console.log(`\n${signal}: shutting down`);
   await server.close();
+  store?.close();
   process.exit(0);
 };
 process.on('SIGINT', () => shutdown('SIGINT'));
