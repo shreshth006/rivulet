@@ -51,7 +51,7 @@
 - The sign-in page could be submitted before its script loaded, on a slow
   link, and the browser then sent the username and password in the URL. Forms
   now post, and their submit buttons stay disabled until the script is in
-  charge.
+  charge; `test/demo-pages.test.js` keeps it that way.
 - Live updates never reached an idle client. A stream nudge asked for a sync,
   but the scheduler kept whichever timer was already pending, and after every
   round that is the idle poll; the nudge waited out the poll. A sooner request
